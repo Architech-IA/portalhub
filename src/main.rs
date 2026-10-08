@@ -14,6 +14,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use axum::{extract::DefaultBodyLimit, extract::State, routing::get, Json, Router};
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
+use sqlx::Connection;
 use std::str::FromStr;
 
 use crate::{config::Config, state::AppState};
@@ -62,10 +63,27 @@ async fn main() {
     // cada consulta repetida cuesta UN viaje a la base en vez de dos (importante con la base
     // remota). En modo transacción (puerto 6543) esto NO funcionaría.
 
+    // Medido (2026-10-08): la red pura al servidor de la base son ~85 ms, pero un `SELECT 1`
+    // tardaba ~190 ms. La diferencia era el "ping" de comprobación que sqlx hace ANTES de cada
+    // consulta al sacar una conexión del pool (`test_before_acquire`, activado por defecto): un
+    // viaje de ida y vuelta extra por petición. Se reemplaza por una comprobación condicional:
+    // solo se hace el ping si la conexión estuvo inactiva más de 30 s (cuando el pooler pudo
+    // haberla cerrado); en uso normal, la consulta sale directo.
     let pool = PgPoolOptions::new()
         .min_connections(2)
         .max_connections(8)
         .acquire_timeout(Duration::from_secs(10))
+        .test_before_acquire(false)
+        .before_acquire(|conn, meta| {
+            Box::pin(async move {
+                if meta.idle_for < Duration::from_secs(30) {
+                    return Ok(true);
+                }
+                Ok(conn.ping().await.is_ok())
+            })
+        })
+        .idle_timeout(Duration::from_secs(300))
+        .max_lifetime(Duration::from_secs(1800))
         .connect_with(opts)
         .await
         .unwrap_or_else(|e| {
