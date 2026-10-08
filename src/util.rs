@@ -168,11 +168,27 @@ pub async fn log_activity(
     user_id: Option<&str>,
     lead_id: Option<&str>,
 ) {
+    log_activity_full(pool, tipo, descripcion, entity_type, entity_id, user_id, lead_id, None, None).await
+}
+
+/// Igual que `log_activity` pero con `proposalId` y `projectId` (los usan propuestas e hitos).
+#[allow(clippy::too_many_arguments)]
+pub async fn log_activity_full(
+    pool: &PgPool,
+    tipo: &str,
+    descripcion: &str,
+    entity_type: &str,
+    entity_id: &str,
+    user_id: Option<&str>,
+    lead_id: Option<&str>,
+    proposal_id: Option<&str>,
+    project_id: Option<&str>,
+) {
     let Some(uid) = user_id.filter(|u| !u.is_empty()) else { return };
     let r = exec(
         pool,
-        r#"INSERT INTO "Activity" (id, type, description, "entityType", "entityId", "userId", "leadId", "createdAt")
-           VALUES ($1, $2::"ActivityType", $3, $4, $5, $6, $7, NOW())"#,
+        r#"INSERT INTO "Activity" (id, type, description, "entityType", "entityId", "userId", "leadId", "proposalId", "projectId", "createdAt")
+           VALUES ($1, $2::"ActivityType", $3, $4, $5, $6, $7, $8, $9, NOW())"#,
         &[
             B::T(new_id()),
             B::T(tipo.to_string()),
@@ -180,7 +196,9 @@ pub async fn log_activity(
             B::T(entity_type.to_string()),
             B::T(entity_id.to_string()),
             B::T(uid.to_string()),
-            B::OT(lead_id.map(|x| x.to_string())),
+            B::OT(lead_id.filter(|x| !x.is_empty()).map(|x| x.to_string())),
+            B::OT(proposal_id.filter(|x| !x.is_empty()).map(|x| x.to_string())),
+            B::OT(project_id.filter(|x| !x.is_empty()).map(|x| x.to_string())),
         ],
     )
     .await;
@@ -277,4 +295,119 @@ pub fn numero(v: Option<&Value>) -> f64 {
         Some(Value::Bool(true)) => 1.0,
         _ => 0.0,
     }
+}
+
+// ── Helpers para rutas CRUD ─────────────────────────────────────────────────────────────────
+/// `new Date(x)` de JavaScript sobre un parámetro de texto (ISO o "YYYY-MM-DD" = medianoche UTC)
+/// → timestamp UTC sin zona (como guarda Prisma). NULL si el parámetro es NULL.
+pub fn ts_js_opt(n: usize) -> String {
+    format!("CASE WHEN ${n}::text IS NULL THEN NULL ELSE ${n}::text::timestamptz AT TIME ZONE 'UTC' END")
+}
+
+/// `x ? new Date(x) : null` — texto de fecha del cuerpo (vacío o ausente = None).
+pub fn fecha_cuerpo(body: &Value, k: &str) -> Option<String> {
+    match body.get(k) {
+        Some(Value::String(x)) if !x.is_empty() => Some(x.clone()),
+        _ => None,
+    }
+}
+
+/// `x != null && x !== '' ? Number(x) : null`
+pub fn num_o_nulo(body: &Value, k: &str) -> Option<f64> {
+    match body.get(k) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(x)) if x.is_empty() => None,
+        v => Some(numero(v)),
+    }
+}
+
+/// Constructor de `UPDATE ... SET col = $n, ... WHERE id = $1 RETURNING *` con columnas
+/// opcionales (el `...(x !== undefined ? {x} : {})` de Prisma). `$1` siempre es el id.
+pub struct Upd {
+    pub sets: Vec<String>,
+    pub binds: Vec<B>,
+}
+
+impl Upd {
+    /// Tabla con columna "updatedAt" (se refresca sola, Prisma lo hace en el cliente).
+    pub fn new(id: &str) -> Self {
+        Self { sets: vec![r#""updatedAt" = NOW()"#.to_string()], binds: vec![B::T(id.to_string())] }
+    }
+    /// Tabla sin "updatedAt".
+    pub fn sin_updated(id: &str) -> Self {
+        Self { sets: vec![], binds: vec![B::T(id.to_string())] }
+    }
+    pub fn set(&mut self, col: &str, b: B) {
+        self.binds.push(b);
+        self.sets.push(format!(r#""{col}" = ${}"#, self.binds.len()));
+    }
+    /// Con una expresión que usa el marcador `{n}` (un cast, `ts_js_opt`...).
+    pub fn set_expr(&mut self, col: &str, b: B, expr: &str) {
+        self.binds.push(b);
+        let n = self.binds.len();
+        self.sets.push(format!(r#""{col}" = {}"#, expr.replace("{n}", &format!("${n}"))));
+    }
+    pub fn sql(&self, tabla: &str) -> String {
+        format!(
+            r#"WITH up AS (UPDATE "{tabla}" SET {} WHERE id = $1 RETURNING *) SELECT to_jsonb(up) FROM up"#,
+            self.sets.join(", ")
+        )
+    }
+}
+
+/// Valor del cuerpo como texto opcional: string → Some, null/ausente → None.
+pub fn s_opt(body: &Value, k: &str) -> Option<String> {
+    s(body, k)
+}
+
+/// `sesion.id` como `Option<&str>` para `log_activity` (vacío = sin usuario).
+pub fn uid(sesion: &crate::session::Session) -> Option<&str> {
+    if sesion.id.is_empty() {
+        None
+    } else {
+        Some(&sesion.id)
+    }
+}
+
+impl Upd {
+    /// `WITH up AS (UPDATE ... RETURNING *) <resto>` — para devolver la fila con relaciones.
+    pub fn con(&self, tabla: &str, resto: &str) -> String {
+        format!(r#"WITH up AS (UPDATE "{tabla}" SET {} WHERE id = $1 RETURNING *) {resto}"#, self.sets.join(", "))
+    }
+}
+
+// ── Caché por huella para lecturas grandes ──────────────────────────────────────────────────
+/// Últimas respuestas de lecturas grandes, por clave (p. ej. el usuario), con su huella (md5 del JSON).
+pub type CacheJson = std::sync::Mutex<std::collections::HashMap<String, (String, std::sync::Arc<Value>)>>;
+
+/// Para lecturas de decenas o cientos de KB cuyo costo real es TRANSFERIR el JSON desde la base
+/// remota (el enlace rinde ~0,5 MB/s: el backlog de 1,3 MB tardaba ~1,4 s; una lista de 150 KB,
+/// ~0,3 s). Primero se pide solo la huella (md5 del mismo JSON, calculada en la base): si coincide
+/// con la última respuesta de esa `clave`, se devuelve la copia en memoria; si no, se trae todo
+/// (JSON + huella en una sola consulta). La respuesta es SIEMPRE el estado actual de la base:
+/// cualquier escritura (de Rust, de Next o del Motor) cambia la huella. `sql` debe ser un `SELECT`
+/// de UNA columna jsonb.
+pub async fn fetch_json_cacheado(pool: &PgPool, cache: &CacheJson, clave: &str, sql: &str, binds: &[B]) -> Result<std::sync::Arc<Value>, sqlx::Error> {
+    let hash_sql = format!("SELECT md5(t.j::text) FROM ({sql}) t(j)");
+    let actual = fetch_text_opt(pool, &hash_sql, binds).await?;
+    if let Some(h) = &actual {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((hc, v)) = guard.get(clave) {
+            if hc == h {
+                return Ok(v.clone());
+            }
+        }
+    }
+    let full_sql = format!("SELECT t.j, md5(t.j::text) FROM ({sql}) t(j)");
+    let row = aplicar(sqlx::query(&full_sql), binds).fetch_one(pool).await?;
+    let mut v: Value = row.try_get(0)?;
+    fix_dates(&mut v);
+    let huella: String = row.try_get(1)?;
+    let v = std::sync::Arc::new(v);
+    let mut g = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if g.len() >= 64 {
+        g.clear();
+    }
+    g.insert(clave.to_string(), (huella, v.clone()));
+    Ok(v)
 }

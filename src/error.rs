@@ -19,6 +19,9 @@ impl ApiError {
     pub fn unauthorized() -> Self {
         Self::new(StatusCode::UNAUTHORIZED, "No autorizado")
     }
+    pub fn unauthorized_msg(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, msg)
+    }
     pub fn forbidden(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::FORBIDDEN, msg)
     }

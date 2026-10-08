@@ -3,6 +3,7 @@ mod error;
 mod extract;
 mod google;
 mod llm;
+mod proxy;
 mod routes;
 mod session;
 mod state;
@@ -101,6 +102,8 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .merge(routes::router())
+        // Lo que Rust aún no implementa se reenvía a Next (ver proxy.rs).
+        .fallback(proxy::a_next)
         // Los archivos del hub de leads viajan en base64 dentro del JSON.
         .layer(DefaultBodyLimit::max(40 * 1024 * 1024))
         .with_state(state);
