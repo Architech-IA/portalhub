@@ -21,6 +21,11 @@ pub enum B {
     F(f64),
     J(Value),
     Bo(bool),
+    /// Nulos tipados: la caché de sentencias reutiliza el tipo del parámetro de la primera
+    /// ejecución, así que un parámetro que a veces es número/booleano nunca debe viajar como
+    /// texto nulo (daría "invalid input syntax for type boolean").
+    OF(Option<f64>),
+    OBo(Option<bool>),
 }
 
 impl From<&str> for B {
@@ -48,6 +53,8 @@ fn aplicar<'q>(mut q: Query<'q, Postgres, PgArguments>, binds: &'q [B]) -> Query
             B::F(f) => q.bind(*f),
             B::J(v) => q.bind(v),
             B::Bo(x) => q.bind(*x),
+            B::OF(x) => q.bind(*x),
+            B::OBo(x) => q.bind(*x),
         };
     }
     q

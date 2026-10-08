@@ -48,7 +48,7 @@ async fn refrescar_token(st: &AppState, user_id: &str) -> Option<String> {
                                         ELSE (NOW() AT TIME ZONE 'UTC') + make_interval(secs => $3::float8) END,
              "updatedAt" = NOW()
            WHERE id = $1"#,
-        &[B::T(user_id.to_string()), B::T(access.clone()), expira.map(B::F).unwrap_or(B::OT(None))],
+        &[B::T(user_id.to_string()), B::T(access.clone()), B::OF(expira)],
     )
     .await;
     Some(access)

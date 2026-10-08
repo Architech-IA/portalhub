@@ -3,11 +3,13 @@ use axum::Router;
 use crate::state::AppState;
 
 pub mod aichat;
+pub mod catalogos;
 pub mod dashboard;
 pub mod hub;
 pub mod leads;
 pub mod meetings;
 pub mod profile;
+pub mod prospecting;
 pub mod users;
 
 pub fn router() -> Router<AppState> {
@@ -19,4 +21,6 @@ pub fn router() -> Router<AppState> {
         .merge(leads::router())
         .merge(hub::router())
         .merge(aichat::router())
+        .merge(catalogos::router())
+        .merge(prospecting::router())
 }

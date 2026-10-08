@@ -27,6 +27,7 @@ const prisma = new PrismaClient()
 const area = process.argv[2] || 'all'
 const TAG = 'PARITY-TEST'
 
+const SIN_CUERPO = { esperada: 'Next responde 500 sin cuerpo; Rust responde 500 con JSON de error' }
 const creados = { leads: [] }
 const resumen = { ok: 0, orden: 0, esperadas: 0, fallas: 0 }
 const fallas = []
@@ -133,6 +134,15 @@ async function lecturas(ck) {
     await get('GET /api/dashboard', '/api/dashboard', { drop: ['tendencias'] })
     await get('GET /api/dashboard (tendencias)', '/api/dashboard', { esperada: 'cálculo de fin de mes corregido (ver dashboard.rs); se verifica a mano abajo' })
     await get('GET /api/dashboard/personal', '/api/dashboard/personal')
+  }
+  if (['catalogos', 'all'].includes(area)) {
+    await get('GET /api/clientes', '/api/clientes')
+    for (const c of await sel('SELECT id FROM "Cliente" ORDER BY "createdAt" DESC LIMIT 3')) await get(`GET /api/clientes/${c.id.slice(0, 8)}…`, `/api/clientes/${c.id}`)
+    await get('GET /api/prospectos', '/api/prospectos')
+    await get('GET /api/niches', '/api/niches')
+    await get('GET /api/prospecting/table', '/api/prospecting/table')
+    await get('GET /api/prospecting/table?converted=false', '/api/prospecting/table?converted=false')
+    await get('GET /api/prospecting/table?city=Bogot', '/api/prospecting/table?city=Bogot')
   }
   if (['leads', 'hub', 'all'].includes(area)) {
     await get('GET /api/leads', '/api/leads')
@@ -313,6 +323,47 @@ async function main() {
         await P('DELETE lead', base, 'DELETE', `/api/leads/${id}`, ckAdmin, undefined, {})
       })
     }
+    if (['catalogos', 'all'].includes(area)) {
+      await flujo('clientes + prospectos + nichos + tabla del prospector (admin)', async (base, L) => {
+        const P = paso(L)
+        const c = await P('POST /api/clientes', base, 'POST', '/api/clientes', ckAdmin, { nombre: `${TAG} Cliente`, industria: 'Tec', contacto: 'Ana', email: 'a@p.test', pais: 'CO', estado: 'Activo', valorTotal: '1200.5' }, {})
+        const cid = c.json && c.json.id
+        await P('GET cliente', base, 'GET', `/api/clientes/${cid}`, ckAdmin, undefined, {})
+        await P('GET cliente inexistente', base, 'GET', '/api/clientes/no-existe', ckAdmin, undefined, {})
+        await P('PUT cliente', base, 'PUT', `/api/clientes/${cid}`, ckAdmin, { nombre: `${TAG} Cliente 2`, industria: 'Fin', contacto: 'Bob', email: 'b@p.test', pais: 'MX', estado: 'Activo', valorTotal: 99 }, {})
+        await P('PUT cliente inexistente', base, 'PUT', '/api/clientes/no-existe', ckAdmin, { nombre: 'x' }, {})
+        const pr = await P('POST /api/prospectos', base, 'POST', '/api/prospectos', ckAdmin, { empresa: `${TAG} Prosp`, industria: 'Tec', nicho: 'x', userId: admin.id }, {})
+        const pid = pr.json && pr.json.id
+        await P('PUT prospecto estado', base, 'PUT', `/api/prospectos/${pid}`, ckAdmin, { estado: 'Contactado' }, {})
+        await P('PUT prospecto campos', base, 'PUT', `/api/prospectos/${pid}`, ckAdmin, { notas: '', telefono: '123' }, {})
+        await P('PUT prospecto inexistente', base, 'PUT', '/api/prospectos/no-existe', ckAdmin, { estado: 'x' }, SIN_CUERPO)
+        await P('DELETE prospecto', base, 'DELETE', `/api/prospectos/${pid}`, ckAdmin, undefined, {})
+        await P('DELETE prospecto otra vez', base, 'DELETE', `/api/prospectos/${pid}`, ckAdmin, undefined, SIN_CUERPO)
+        const n1 = await P('POST /api/niches 1', base, 'POST', '/api/niches', ckAdmin, { name: `${TAG} N1`, industry: 'Tec', x: 10, y: 20, potential: 5, userId: admin.id }, {})
+        const n2 = await P('POST /api/niches 2', base, 'POST', '/api/niches', ckAdmin, { name: `${TAG} N2`, industry: 'Fin', size: 0, userId: admin.id }, {})
+        const a = n1.json && n1.json.id, b = n2.json && n2.json.id
+        await P('PUT niche', base, 'PUT', `/api/niches/${a}`, ckAdmin, { name: `${TAG} N1b`, description: '', competitors: 3, trend: 'up' }, {})
+        const cx = await P('POST conexión', base, 'POST', '/api/niches/connections', ckAdmin, { fromId: a, toId: b, label: 'l' }, {})
+        await P('POST conexión duplicada (inversa)', base, 'POST', '/api/niches/connections', ckAdmin, { fromId: b, toId: a }, {})
+        await P('DELETE conexión sin id', base, 'DELETE', '/api/niches/connections', ckAdmin, undefined, {})
+        await P('DELETE conexión', base, 'DELETE', `/api/niches/connections?id=${cx.json && cx.json.id}`, ckAdmin, undefined, {})
+        await P('DELETE niche 1', base, 'DELETE', `/api/niches/${a}`, ckAdmin, undefined, {})
+        await P('DELETE niche 2', base, 'DELETE', `/api/niches/${b}`, ckAdmin, undefined, {})
+        await P('DELETE niche inexistente', base, 'DELETE', '/api/niches/no-existe', ckAdmin, undefined, SIN_CUERPO)
+        const lugares = [{ placeId: 'parity-p1', name: `${TAG} Lugar 1`, address: 'Calle 1', rating: 4.5, totalRatings: 10, types: ['a', 'b'], lat: 1.5, lng: -2.5 }, { placeId: 'parity-p2', name: `${TAG} Lugar 2` }]
+        await P('POST table (guarda)', base, 'POST', '/api/prospecting/table', ckAdmin, { places: lugares, city: `${TAG} Ciudad`, category: 'cat' }, {})
+        await P('POST table (repite = actualiza)', base, 'POST', '/api/prospecting/table', ckAdmin, { places: lugares, city: `${TAG} Ciudad2`, category: 'cat' }, {})
+        await P('POST table sin datos', base, 'POST', '/api/prospecting/table', ckAdmin, { places: [] }, {})
+        const tb = await P('GET table filtrada', base, 'GET', `/api/prospecting/table?city=${encodeURIComponent(TAG)}`, ckAdmin, undefined, {})
+        const rid = tb.json && tb.json[0] && tb.json[0].id
+        await P('PATCH table convertido', base, 'PATCH', '/api/prospecting/table', ckAdmin, { id: rid, convertedToLead: true }, {})
+        await P('GET table convertidos', base, 'GET', `/api/prospecting/table?converted=true&city=${encodeURIComponent(TAG)}`, ckAdmin, undefined, {})
+        await P('DELETE table', base, 'DELETE', '/api/prospecting/table', ckAdmin, { id: rid }, {})
+        await P('DELETE table otra vez', base, 'DELETE', '/api/prospecting/table', ckAdmin, { id: rid }, SIN_CUERPO)
+        await P('DELETE cliente', base, 'DELETE', `/api/clientes/${cid}`, ckAdmin, undefined, {})
+        await P('DELETE cliente otra vez', base, 'DELETE', `/api/clientes/${cid}`, ckAdmin, undefined, {})
+      })
+    }
   } finally {
     // limpieza de TODO lo de prueba
     await prisma.$executeRawUnsafe(`DELETE FROM "Activity" WHERE description LIKE '%${TAG}%'`)
@@ -321,6 +372,10 @@ async function main() {
     if (creados.leads.length) await prisma.$executeRawUnsafe(`DELETE FROM "LeadHub" WHERE "leadId" = ANY($1::text[])`, creados.leads)
     await prisma.$executeRawUnsafe(`DELETE FROM "Lead" WHERE "companyName" LIKE '${TAG}%'`)
     await prisma.$executeRawUnsafe(`DELETE FROM "Cliente" WHERE nombre LIKE '${TAG}%'`)
+    await prisma.$executeRawUnsafe(`DELETE FROM "Prospecto" WHERE empresa LIKE '${TAG}%'`)
+    await prisma.$executeRawUnsafe(`DELETE FROM "NicheConnection" WHERE "fromId" IN (SELECT id FROM "NicheMarket" WHERE name LIKE '${TAG}%') OR "toId" IN (SELECT id FROM "NicheMarket" WHERE name LIKE '${TAG}%')`)
+    await prisma.$executeRawUnsafe(`DELETE FROM "NicheMarket" WHERE name LIKE '${TAG}%'`)
+    await prisma.$executeRawUnsafe(`DELETE FROM "ProspectorResult" WHERE "placeId" LIKE 'parity-%'`)
     await prisma.$executeRawUnsafe(`DELETE FROM "Activity" WHERE "userId" = 'parity-bot-id'`)
     await prisma.$executeRawUnsafe(`DELETE FROM "User" WHERE email LIKE 'parity-%@example.test'`)
   }

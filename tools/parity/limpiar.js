@@ -8,6 +8,10 @@ const sql = [
   `DELETE FROM "Solucion" WHERE nombre LIKE 'PARITY-TEST%'`,
   `DELETE FROM "Lead" WHERE "companyName" LIKE 'PARITY-TEST%'`,
   `DELETE FROM "Cliente" WHERE nombre LIKE 'PARITY-TEST%'`,
+  `DELETE FROM "Prospecto" WHERE empresa LIKE 'PARITY-TEST%'`,
+  `DELETE FROM "NicheConnection" WHERE "fromId" IN (SELECT id FROM "NicheMarket" WHERE name LIKE 'PARITY-TEST%') OR "toId" IN (SELECT id FROM "NicheMarket" WHERE name LIKE 'PARITY-TEST%')`,
+  `DELETE FROM "NicheMarket" WHERE name LIKE 'PARITY-TEST%'`,
+  `DELETE FROM "ProspectorResult" WHERE "placeId" LIKE 'parity-%'`,
   `DELETE FROM "User" WHERE email LIKE 'parity-%@example.test'`,
 ]
 ;(async () => {
