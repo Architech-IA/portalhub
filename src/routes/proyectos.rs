@@ -1418,7 +1418,7 @@ async fn extraer_plan(st: &AppState, sesion_id: &str, usuario_id: &str) -> Resul
 // ═══════════════════════════════ PROYECTOS Y SESIONES ═══════════════════════════════
 async fn proyectos_listar(State(st): State<AppState>, o: Opcional) -> ApiResult<Json<Value>> {
     let u = usuario(&o)?;
-    let v = fetch_json(
+    let mut v = fetch_json(
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', so.id, 'nombre', so.nombre, 'tipo', so.tipo, 'estado', so.estado, 'codigo', so."solucionCode",
               'sesiones', COALESCE(se.n, 0), 'ultimaActividad', se.ultima, 'memoriaVersion', COALESCE(me.version, 0),
@@ -1432,6 +1432,27 @@ async fn proyectos_listar(State(st): State<AppState>, o: Opcional) -> ApiResult<
         &[B::T(u.id)],
     )
     .await?;
+    // Fase del motor de cada proyecto (si lo tiene), para mostrarla en la lista.
+    let cartera = fetch_json(&st.pool, crate::routes::central::SQL_CARTERA, &[]).await?;
+    let mut por_id: HashMap<String, Value> = HashMap::new();
+    for fila in cartera.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        let f = crate::routes::central::fila_cartera(fila);
+        if let Some(id) = f["id"].as_str() {
+            por_id.insert(
+                id.to_string(),
+                json!({
+                    "numero": f["faseNumero"], "nombre": f["faseNombre"], "bloque": f["bloque"], "estadoMotor": f["estadoMotor"], "totalFases": f["totalFases"],
+                    "puerta": f["puerta"], "leadId": f["leadId"], "cliente": f["cliente"],
+                }),
+            );
+        }
+    }
+    if let Some(items) = v.as_array_mut() {
+        for it in items.iter_mut() {
+            let f = it["id"].as_str().and_then(|id| por_id.get(id)).cloned().unwrap_or(Value::Null);
+            it["fase"] = f;
+        }
+    }
     Ok(Json(v))
 }
 

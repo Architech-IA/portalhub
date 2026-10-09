@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
 /// Una ejecución que lleva más de esto en RUNNING se considera atascada.
 const ATASCADA_HORAS: i64 = 2;
 
-const SQL_CARTERA: &str = r#"
+pub(super) const SQL_CARTERA: &str = r#"
 SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."enFaseDesde" DESC NULLS LAST), '[]'::jsonb) FROM (
   SELECT s.id, s."leadId", s.nombre, s.tipo, s."solucionCode" AS codigo, pf."faseActual", pf.estado AS "estadoMotor", pf.definicion, pf.criterios,
          (SELECT MAX(h."createdAt") FROM "ProyectoFaseHistorial" h WHERE h."solucionId" = s.id) AS "enFaseDesde",
@@ -85,7 +85,7 @@ FROM (SELECT (e.artifacts->'usage'->>'total_tokens')::bigint AS total, (e.artifa
         FROM "TaskExecution" e WHERE jsonb_typeof(e.artifacts) = 'object' AND e.artifacts->'usage' IS NOT NULL) u"#;
 
 /// Fila de la cartera: la fase con su nombre y avance de puerta, calculados con la plantilla del proyecto.
-fn fila_cartera(p: &Value) -> Value {
+pub(super) fn fila_cartera(p: &Value) -> Value {
     let def = &p["definicion"];
     let actual = p["faseActual"].as_str().unwrap_or_default();
     let idx = indice(def, actual).unwrap_or(0);
