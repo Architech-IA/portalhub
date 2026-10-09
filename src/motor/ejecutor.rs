@@ -473,13 +473,22 @@ struct ResultadoCodigo {
     errores: Vec<String>,
 }
 
-async fn chequeo_real(tool_log: &[Value], raiz: &Path) -> ResultadoCodigo {
-    let escritos: Vec<String> = tool_log
+/// Archivos que una tarea escribió o modificó según su registro de herramientas: `write_file`, `edit_file` y el destino de
+/// `move_file`. Se ignoran las llamadas que el worker rechazó (su resultado empieza con "ERROR").
+fn archivos_tocados(tool_log: &[Value]) -> Vec<String> {
+    tool_log
         .iter()
-        .filter(|t| t["tool"] == "write_file")
-        .filter_map(|t| t["args"]["rel_path"].as_str().map(String::from))
-        .filter(|f| f.ends_with(".ts") || f.ends_with(".tsx"))
-        .collect();
+        .filter(|t| !t["resultPreview"].as_str().unwrap_or("").starts_with("ERROR"))
+        .filter_map(|t| match t["tool"].as_str() {
+            Some("write_file") | Some("edit_file") => t["args"]["rel_path"].as_str().map(String::from),
+            Some("move_file") => t["args"]["rel_to"].as_str().map(String::from),
+            _ => None,
+        })
+        .collect()
+}
+
+async fn chequeo_real(tool_log: &[Value], raiz: &Path) -> ResultadoCodigo {
+    let escritos: Vec<String> = archivos_tocados(tool_log).into_iter().filter(|f| f.ends_with(".ts") || f.ends_with(".tsx")).collect();
     let uso_comando = tool_log.iter().any(|t| t["tool"] == "run_command");
     if escritos.is_empty() && !uso_comando {
         return ResultadoCodigo { corrio: false, paso: true, errores: vec![] };
@@ -513,7 +522,7 @@ struct Veredicto {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option<&str>, criterios: Vec<String>, resumen: &str, compilo: bool, archivos: &[String]) -> Veredicto {
+async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option<&str>, criterios: Vec<String>, resumen: &str, compilo: bool, archivos: &[String], cambios: &str) -> Veredicto {
     let criterios = if criterios.is_empty() {
         vec![format!(
             "El resultado responde realmente a lo que pide la tarea \"{titulo}\"{}. No alcanza con que el resultado no este vacio — tiene que responder lo pedido.",
@@ -522,11 +531,17 @@ async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option
     } else {
         criterios
     };
-    let contexto_codigo = if archivos.is_empty() {
+    let contexto_codigo = if archivos.is_empty() && cambios.trim().is_empty() {
         String::new()
     } else {
+        // Con el diff real delante, el verificador juzga el CÓDIGO (no solo el texto del resumen que escribió el agente).
+        let diff = if cambios.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\n\nCAMBIOS REALES EN EL CÓDIGO (git diff de esta tarea{}):\n{}\n\nJuzgá si se cumplen los criterios mirando ESTE código, no solo lo que dice el resumen.", if cambios.contains("[diff truncado") { ", truncado" } else { "" }, cambios)
+        };
         format!(
-            "\nCONTEXTO REAL DE EJECUCIÓN (verificado por el sistema, no por el agente): el agente escribió realmente estos archivos en el repo: {}.{} NO le exijas que pegue el código fuente dentro del resumen — el código ya existe y compiló en el repo real; tu trabajo es juzgar si el ALCANCE descrito en el resumen responde razonablemente a la tarea, no el formato del texto.\n",
+            "\nCONTEXTO REAL DE EJECUCIÓN (verificado por el sistema, no por el agente): el agente escribió realmente estos archivos en el repo: {}.{} NO le exijas que pegue el código fuente dentro del resumen — el código ya existe y compiló en el repo real; tu trabajo es juzgar si el ALCANCE descrito en el resumen responde razonablemente a la tarea, no el formato del texto.{diff}\n",
             archivos.join(", "),
             if compilo { " El compilador real (tsc --noEmit) confirmó que el código compila sin errores." } else { "" }
         )
@@ -539,22 +554,41 @@ async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option
         if resumen.is_empty() { "(el resultado llegó vacío)".to_string() } else { cortar(resumen, 8000) },
         if largo > 8000 { "\n[... resumen truncado aca solo para el verificador, el resultado real completo es mas largo ...]" } else { "" }
     );
+    // Hasta 2 intentos: una llamada que se corta por tiempo o un JSON mal formado del verificador es un fallo del propio verificador, no del
+    // trabajo de la tarea (visto en el eval del 09/10/2026: el código compilaba y el verificador murió a los 90 s). El worker espera el cierre
+    // hasta 420 s (ver report_completion), así que dos intentos de ≤100 s caben de sobra.
     let r: Result<Value, String> = async {
-        let salida = llm::call_open_code(
-            st,
-            "Eres Sigma, agente verificador de calidad de ArchiTechIA. Juzgás si un resultado responde de verdad lo que se pidió, nunca por longitud del texto.",
-            &usuario,
-            &format!("masd-verify-{tarea}"),
-            2048,
-            90,
-        )
-        .await?;
-        let (i, f) = (salida.find('{'), salida.rfind('}'));
-        let (Some(i), Some(f)) = (i, f) else { return Err("No JSON in verifier response".to_string()) };
-        if f < i {
-            return Err("No JSON in verifier response".to_string());
+        let mut ultimo = String::from("sin intentos");
+        for intento in 0..2 {
+            if intento > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+            let salida = match llm::call_open_code(
+                st,
+                "Eres Sigma, agente verificador de calidad de ArchiTechIA. Juzgás si un resultado responde de verdad lo que se pidió, nunca por longitud del texto.",
+                &usuario,
+                &format!("masd-verify-{tarea}"),
+                2048,
+                100,
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("[VERIFICADOR] intento {} falló ({e}) — {}", intento + 1, if intento == 0 { "reintentando" } else { "se rinde" });
+                    ultimo = e;
+                    continue;
+                }
+            };
+            match (salida.find('{'), salida.rfind('}')) {
+                (Some(i), Some(f)) if f >= i => match serde_json::from_str::<Value>(&salida[i..=f]) {
+                    Ok(v) => return Ok(v),
+                    Err(e) => ultimo = e.to_string(),
+                },
+                _ => ultimo = "No JSON in verifier response".to_string(),
+            }
         }
-        serde_json::from_str::<Value>(&salida[i..=f]).map_err(|e| e.to_string())
+        Err(ultimo)
     }
     .await;
     match r {
@@ -575,6 +609,8 @@ pub struct Cierre {
     pub duracion_ms: i64,
     pub contexto_usado: Option<String>,
     pub tool_log: Vec<Value>,
+    /// Uso de tokens de toda la tarea que reporta el worker: { prompt_tokens, completion_tokens, total_tokens, calls, model }.
+    pub uso: Option<Value>,
 }
 
 /// Recibe el resultado del worker y cierra el ciclo: verificación, estado de la tarea y cierre de sprint.
@@ -625,9 +661,17 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
             verificado = "FAILED".into();
             checklist = vec![json!({ "criterion": "El código escrito compila (tsc --noEmit)", "passed": false, "reason": format!("Errores reales de TypeScript en los archivos que esta tarea escribió:\n{}", chequeo.errores.join("\n")) })];
         } else {
-            let archivos: Vec<String> = c.tool_log.iter().filter(|t| t["tool"] == "write_file").filter_map(|t| t["args"]["rel_path"].as_str().map(String::from)).collect();
+            let archivos: Vec<String> = archivos_tocados(&c.tool_log);
+            // El parche real de la tarea (tope de 9.000 caracteres) para que el verificador juzgue el código y no solo el resumen.
+            let cambios = match (&wt_tarea, uso_worktree) {
+                (Some(wt), true) => {
+                    let d = repo::diff_de_tarea(wt).await;
+                    if d.chars().count() > 9000 { format!("{}\n[diff truncado: la tarea cambió más de lo que cabe acá]", cortar(&d, 9000)) } else { d }
+                }
+                _ => String::new(),
+            };
             let criterio = criterio_prd(st, so(&t, "solucionId").as_deref(), so(&t, "prdRequisitoId").as_deref()).await;
-            let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), &c.resumen, chequeo.corrio, &archivos).await;
+            let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), &c.resumen, chequeo.corrio, &archivos, &cambios).await;
             verificado = if v.paso { "DONE".into() } else { "FAILED".into() };
             checklist = v.checklist;
             if chequeo.corrio {
@@ -638,7 +682,21 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
         }
     }
 
-    exec(&st.pool, r#"UPDATE "TaskExecution" SET artifacts=$2::jsonb WHERE id=$1"#, &[B::T(exec_id.into()), B::T(json!({ "checklist": checklist, "toolLog": c.tool_log }).to_string())]).await.map_err(err_db)?;
+    // Artefactos de la ejecución: checklist, registro de herramientas y, si el worker lo mandó, el uso de tokens (para medir cuánto cuesta cada tarea).
+    let mut artefactos = json!({ "checklist": checklist, "toolLog": c.tool_log });
+    if let Some(u) = c.uso.as_ref().filter(|u| u.is_object()) {
+        artefactos["usage"] = u.clone();
+        let n = |k: &str| u[k].as_i64().unwrap_or(0);
+        emitir_traza(
+            st,
+            tarea,
+            Some(exec_id),
+            "info",
+            &format!("uso de tokens — {} en total ({} entrada + {} salida) en {} llamada(s) al modelo{}", miles_es_ar(n("total_tokens").max(0) as usize), n("prompt_tokens"), n("completion_tokens"), n("calls"), u["model"].as_str().map(|m| format!(" ({m})")).unwrap_or_default()),
+        )
+        .await;
+    }
+    exec(&st.pool, r#"UPDATE "TaskExecution" SET artifacts=$2::jsonb WHERE id=$1"#, &[B::T(exec_id.into()), B::T(artefactos.to_string())]).await.map_err(err_db)?;
 
     let mut resultado_final = c.resumen.clone();
     if let (true, Some(codigo_sprint), Some(wt), Some(cod)) = (uso_worktree, so(&t, "sprintCode").filter(|x| !x.is_empty()), wt_tarea.as_ref(), codigo.as_deref()) {

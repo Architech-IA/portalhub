@@ -58,7 +58,14 @@ src/
 tools/parity/    harness de paridad Next ↔ Rust (decide cada corte): parity.js, parity2.js, t4.js, auth.js
 scripts/         build.sh (compila en Docker), start.sh (público), start-motor.sh (privilegiado)
 deploy/nginx/    upstream, snippets y rutas
+deploy/ops/      vigilancia (cron cada minuto) y respaldo diario de la configuración
+deploy/worker/   worker de Python del Motor y herramientas de los agentes (file_tools.py, con pruebas): ver deploy/worker/README.md
+deploy/harness/  Harness (cola de tareas) y su API de monitoreo
 ```
+
+El Motor y sus agentes: el Motor (Rust) arma el contexto, despacha a la cola del Harness y cierra la tarea (compilador `tsc` + verificador
+semántico que ve el **diff real** de la tarea); los workers de Python (`deploy/worker`) llaman al modelo en un bucle de herramientas
+(leer por rangos, `edit_file`, escribir en rutas permitidas, comandos en un contenedor aislado) y reportan el resultado y el uso de tokens.
 
 ### Decisiones
 

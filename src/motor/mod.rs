@@ -118,6 +118,7 @@ async fn complete(State(st): State<AppState>, cuerpo: Option<Json<Value>>) -> Re
         duracion_ms: duracion,
         contexto_usado: b["contextUsed"].as_str().map(String::from),
         tool_log: b["toolLog"].as_array().cloned().unwrap_or_default(),
+        uso: b.get("usage").filter(|u| u.is_object()).cloned(),
     };
     match ejecutor::finalizar(&st, cierre).await {
         Ok(r) => {

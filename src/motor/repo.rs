@@ -166,12 +166,34 @@ pub async fn asegurar_repo_externo(st: &AppState, repositorio: &str, privado: bo
     sh("git", &["clone", &format!("https://{token}@github.com/{org}/{repositorio}.git"), &destino], None, 600).await.map_err(|e| e.replace(&token, "***"))?;
     // El token queda embebido en la URL solo durante el clone: se reescribe el remote sin él.
     git(&["remote", "set-url", "origin", &format!("https://github.com/{org}/{repositorio}.git")], &local).await?;
+    if creado {
+        politica_por_defecto(&local).await;
+    }
     if local.join("package.json").exists() {
         if let Err(e) = sh("npm", &["install"], Some(&local), 900).await {
             tracing::error!("[REPO_CONFIG] npm install falló en {repositorio} (no bloqueante): {e}");
         }
     }
     Ok((local, creado))
+}
+
+/// Política de escritura de los agentes para un repositorio NUEVO de proyecto (la lee `file_tools.py` del worker; el agente no puede
+/// modificarla). Además de las rutas habituales (src/, app/, tests/, docs/…) permite la configuración de Next.js —el prompt del worker
+/// pide `output: 'standalone'`, que el despliegue aprovecha— y el esquema de Prisma, que hace falta para migraciones. El repo del portal
+/// NO la tiene: ahí esos archivos siguen protegidos.
+const POLITICA_PROYECTO: &str = "{\n  \"escritura\": [\"next.config.js\", \"next.config.mjs\", \"next.config.ts\", \"prisma/schema.prisma\"]\n}\n";
+
+async fn politica_por_defecto(local: &Path) {
+    let archivo = local.join(".masd-policy.json");
+    if archivo.exists() || std::fs::write(&archivo, POLITICA_PROYECTO).is_err() {
+        return;
+    }
+    let _ = git(&["add", ".masd-policy.json"], local).await;
+    let mut a: Vec<&str> = IDENTIDAD_GIT.to_vec();
+    a.extend(["commit", "-m", "Política de escritura de los agentes (Motor Agéntico SDD)"]);
+    if let Err(e) = git(&a, local).await {
+        tracing::error!("[REPO_CONFIG] no se pudo commitear .masd-policy.json en {}: {e}", local.display());
+    }
 }
 
 /// Crea (o reutiliza) un repositorio de GitHub para una Solución y lo asocia. No pisa uno ya asociado.
@@ -299,6 +321,14 @@ pub async fn commit_y_merge(codigo: &str, wt_tarea: &Path, rama_tarea_: &str, wt
     }
     let _ = git(&["worktree", "remove", &wt_tarea.to_string_lossy(), "--force"], raiz).await;
     Ok(mergeado)
+}
+
+/// Cambios reales de una tarea en su worktree (todavía sin commitear), como parche de git. Se le muestran al verificador para que juzgue el
+/// código y no solo el resumen que escribió el agente. `add -A` es lo mismo que hace `commit_y_merge` más adelante; se dejan afuera los
+/// archivos de bloqueo, que son enormes y no dicen nada del trabajo.
+pub async fn diff_de_tarea(wt: &Path) -> String {
+    let _ = git(&["add", "-A"], wt).await;
+    git(&["diff", "--cached", "--no-color", "--unified=2", "--", ".", ":(exclude)package-lock.json", ":(exclude)pnpm-lock.yaml"], wt).await.unwrap_or_default()
 }
 
 pub async fn descartar_worktree(wt: &Path, raiz: &Path) {
