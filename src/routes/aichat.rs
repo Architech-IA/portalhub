@@ -51,7 +51,7 @@ fn una_linea(t: &str) -> String {
     RE_SALTOS.replace_all(t, " ").to_string()
 }
 
-fn texto_fase(content: &str) -> String {
+pub(crate) fn texto_fase(content: &str) -> String {
     if content.is_empty() {
         return String::new();
     }

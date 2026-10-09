@@ -40,6 +40,10 @@ pub fn router() -> Router<AppState> {
 
 const PLANTILLA_JSON: &str = include_str!("../../plantillas/proyecto_completo.json");
 const FASE_ARRANQUE: &str = "arranque";
+/// Lugares donde vive lo que produce una fase (cada tipo se resuelve en `resolver_recursos`).
+const TIPOS_RECURSO: [&str; 11] = [
+    "LEAD_HUB", "PROPUESTAS", "HUB_PRD", "HUB_DISENO", "HUB_PLAN", "HUB_CODIGO", "HUB_DESPLIEGUE", "BACKLOG", "SALA_CONTROL", "REUNIONES", "ADJUNTOS",
+];
 
 static BASE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILLA_JSON).expect("plantilla de fases inválida"));
 
@@ -99,6 +103,14 @@ fn validar_plantilla(def: &Value) -> Result<(), String> {
         }
         if f["puerta"]["aprobador"].as_str().map(str::is_empty).unwrap_or(true) {
             return Err(format!("{clave}: la puerta no tiene aprobador"));
+        }
+        for r in f["recursos"].as_array().ok_or_else(|| format!("{clave}: sin recursos"))? {
+            if !TIPOS_RECURSO.contains(&r["tipo"].as_str().unwrap_or_default()) {
+                return Err(format!("{clave}: tipo de recurso desconocido {}", r["tipo"]));
+            }
+            if r["etiqueta"].as_str().map(str::is_empty).unwrap_or(true) {
+                return Err(format!("{clave}: recurso sin etiqueta"));
+            }
         }
         let acts = f["actividades"].as_array().ok_or_else(|| format!("{clave}: sin actividades"))?;
         let mut ac: Vec<&str> = Vec::new();
@@ -195,7 +207,7 @@ fn pendientes(def: &Value, guardados: &Value, idx: usize) -> Vec<String> {
 }
 
 /// La vista que consume la pantalla: una entrada por fase con su estado, criterios y actividades.
-fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, acts: &[Value]) -> Vec<Value> {
+fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, acts: &[Value], ctx: &Value) -> Vec<Value> {
     let cur = indice(def, fase_actual).unwrap_or(0);
     lista(def)
         .iter()
@@ -236,9 +248,161 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                 "estado": est, "entregables": f["entregables"],
                 "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "criterios": crit, "cumplida": cumplida },
                 "actividades": { "total": items.len(), "hechas": hechas, "items": items },
+                "recursos": resolver_recursos(f, ctx),
             })
         })
         .collect()
+}
+
+// ── Dónde está lo de cada fase ──────────────────────────────────────────────────────────────
+fn traduccion_propuesta(s: &str) -> &str {
+    match s {
+        "DRAFT" => "Borrador", "SENT" => "Enviada", "UNDER_REVIEW" => "En revisión", "ACCEPTED" => "Aceptada", "REJECTED" => "Rechazada", otro => otro,
+    }
+}
+
+/// Resume un documento del hub (PRD, diseño, plan) guardado como JSON en la Solución: si tiene contenido, su estado y los requisitos con tarea.
+fn estado_documento(texto: Option<&str>) -> Value {
+    let v: Value = texto.and_then(|t| serde_json::from_str(t).ok()).unwrap_or(Value::Null);
+    let tiene = v.as_object().map(|o| o.iter().any(|(k, x)| {
+        k != "estadoDocumento" && match x {
+            Value::String(s) => !s.trim().is_empty(),
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(m) => !m.is_empty(),
+            _ => false,
+        }
+    })).unwrap_or(false);
+    let reqs = v["requisitos"].as_array().cloned().unwrap_or_default();
+    let con = reqs.iter().filter(|r| r["backlogItemId"].as_str().map(|s| !s.is_empty()).unwrap_or(false)).count();
+    json!({ "tiene": tiene, "estado": v["estadoDocumento"].as_str().unwrap_or("BORRADOR"), "requisitos": reqs.len(), "conBacklog": con })
+}
+
+fn texto_documento(d: &Value, con_requisitos: bool) -> (String, &'static str) {
+    if d["tiene"] != true {
+        return ("Sin contenido todavía".into(), "vacio");
+    }
+    let base = match d["estado"].as_str() { Some("APROBADO") => ("Aprobado", "ok"), Some("EN_REVISION") => ("En revisión", "medio"), _ => ("Borrador", "medio") };
+    let reqs = d["requisitos"].as_i64().unwrap_or(0);
+    if con_requisitos && reqs > 0 {
+        (format!("{} · {}/{} requisitos con tarea", base.0, d["conBacklog"], reqs), base.1)
+    } else {
+        (base.0.to_string(), base.1)
+    }
+}
+
+/// Convierte los recursos de una fase en "dónde está": etiqueta, estado actual, y a dónde ir (enlace o panel del proyecto).
+fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
+    let sol = ctx["solucionId"].as_str().unwrap_or_default();
+    let lead = ctx["leadId"].as_str();
+    // Los proyectos iniciados antes de que existieran los recursos usan los de la plantilla vigente.
+    let recursos = fase["recursos"].as_array().cloned().or_else(|| {
+        lista(&BASE).iter().find(|f| f["clave"] == fase["clave"]).and_then(|f| f["recursos"].as_array().cloned())
+    }).unwrap_or_default();
+    let hub = |seccion: &str| format!("/solutions/pilots/{sol}?seccion={seccion}");
+    recursos
+        .iter()
+        .map(|r| {
+            let tipo = r["tipo"].as_str().unwrap_or_default();
+            let (estado, nivel, href, panel): (String, &str, Option<String>, Option<&str>) = match tipo {
+                "LEAD_HUB" => match lead {
+                    None => ("Sin lead".into(), "vacio", None, None),
+                    Some(l) => {
+                        let h = &ctx["leadHub"][fase["leadStatus"].as_str().unwrap_or_default()];
+                        let (chars, arch) = (h["chars"].as_i64().unwrap_or(0), h["archivos"].as_i64().unwrap_or(0));
+                        let archivos = if arch > 0 { format!(" y {arch} archivo{}", if arch == 1 { "" } else { "s" }) } else { String::new() };
+                        if chars > 0 { (format!("Nota con contenido{archivos}"), "ok", Some(format!("/leads/{l}/hub")), None) } else if arch > 0 { (format!("Sin nota, con {arch} archivo(s)"), "medio", Some(format!("/leads/{l}/hub")), None) } else { ("Sin notas todavía".into(), "vacio", Some(format!("/leads/{l}/hub")), None) }
+                    }
+                },
+                "PROPUESTAS" => match ctx["propuestas"].as_array().filter(|a| !a.is_empty()) {
+                    None => ("Sin propuestas".into(), "vacio", None, None),
+                    Some(a) => {
+                        let ultima = &a[0];
+                        let st = ultima["status"].as_str().unwrap_or_default();
+                        let nivel = if matches!(st, "SENT" | "ACCEPTED") { "ok" } else { "medio" };
+                        (format!("{} propuesta{} · la última: {}", a.len(), if a.len() == 1 { "" } else { "s" }, traduccion_propuesta(st)), nivel, ultima["id"].as_str().map(|i| format!("/proposals/{i}")), None)
+                    }
+                },
+                "HUB_PRD" => { let (t, n) = texto_documento(&ctx["prd"], true); (t, n, Some(hub("prd")), None) }
+                "HUB_DISENO" => { let (t, n) = texto_documento(&ctx["diseno"], false); (t, n, Some(hub("diseno")), None) }
+                "HUB_PLAN" => { let (t, n) = texto_documento(&ctx["plan"], false); (t, n, Some(hub("plan-ejec")), None) }
+                "HUB_CODIGO" => match ctx["repositorio"].as_str().filter(|r| !r.is_empty()) {
+                    Some(r) => (format!("Repositorio: {r}"), "ok", Some(hub("codigo")), None),
+                    None => ("Sin repositorio".into(), "vacio", Some(hub("codigo")), None),
+                },
+                "HUB_DESPLIEGUE" => {
+                    let url = ctx["deployUrl"].as_str().filter(|u| !u.is_empty());
+                    let stt = ctx["deployStatus"].as_str().filter(|u| !u.is_empty());
+                    let href = Some(format!("/solutions/pilots/{sol}"));
+                    match (url, stt) {
+                        (Some(u), _) => (format!("Desplegado en {u}"), "ok", href, None),
+                        (None, Some(s)) => (format!("Estado: {s}"), "medio", href, None),
+                        _ => ("Sin despliegue".into(), "vacio", href, None),
+                    }
+                }
+                "BACKLOG" => {
+                    let t = &ctx["tareas"];
+                    let (total, hechas) = (t["total"].as_i64().unwrap_or(0), t["hechas"].as_i64().unwrap_or(0));
+                    if total == 0 { ("Sin tareas".into(), "vacio", Some("/backlog/solution".into()), None) } else { (format!("{hechas}/{total} tareas del proyecto hechas"), if hechas == total { "ok" } else { "medio" }, Some("/backlog/solution".into()), None) }
+                }
+                "SALA_CONTROL" => {
+                    let t = &ctx["tareas"];
+                    let (en_curso, fallidas) = (t["enCurso"].as_i64().unwrap_or(0), t["fallidas"].as_i64().unwrap_or(0));
+                    if fallidas > 0 { (format!("{fallidas} tarea{} fallida{}", if fallidas == 1 { "" } else { "s" }, if fallidas == 1 { "" } else { "s" }), "aviso", None, Some("ejecucion")) }
+                    else if en_curso > 0 { (format!("{en_curso} en curso"), "ok", None, Some("ejecucion")) }
+                    else { ("Nada corriendo".into(), "vacio", None, Some("ejecucion")) }
+                }
+                "REUNIONES" => ("Las reuniones aún no se ligan a un lead: búscala por título".into(), "aviso", Some("/meetings".into()), None),
+                "ADJUNTOS" => {
+                    let n = ctx["adjuntos"].as_i64().unwrap_or(0);
+                    if n > 0 { (format!("{n} adjunto{}", if n == 1 { "" } else { "s" }), "ok", None, Some("adjuntos")) } else { ("Sin adjuntos".into(), "vacio", None, Some("adjuntos")) }
+                }
+                _ => ("".into(), "vacio", None, None),
+            };
+            json!({ "tipo": tipo, "etiqueta": r["etiqueta"], "descripcion": r["descripcion"], "estado": estado, "nivel": nivel, "href": href, "panel": panel })
+        })
+        .collect()
+}
+
+/// Reúne lo que hace falta para decir dónde está cada cosa: notas del Lead Hub, propuestas, documentos del hub, repositorio, despliegue, tareas y adjuntos.
+async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> Result<Value, ApiError> {
+    let s = fetch_json_opt(
+        &st.pool,
+        r#"SELECT jsonb_build_object('repositorio', repositorio, 'deployUrl', "deployUrl", 'deployStatus', "deployStatus", 'prd', prd, 'diseno', "disenoTecnico", 'plan', "planEjecucion",
+                  'adjuntos', (SELECT COUNT(*) FROM "ProyectoAdjunto" a WHERE a."solucionId" = $1),
+                  'tareas', (SELECT jsonb_build_object('total', COUNT(*), 'hechas', COUNT(*) FILTER (WHERE b.status = 'DONE'), 'enCurso', COUNT(*) FILTER (WHERE b.status = 'IN_PROGRESS'),
+                                    'fallidas', COUNT(*) FILTER (WHERE b.status = 'FAILED')) FROM "BacklogItem" b WHERE b."solucionId" = $1))
+             FROM "Solucion" WHERE id = $1"#,
+        &[B::T(sol.into())],
+    )
+    .await?
+    .unwrap_or(Value::Null);
+    let mut ctx = json!({
+        "solucionId": sol, "leadId": lead_id, "repositorio": s["repositorio"], "deployUrl": s["deployUrl"], "deployStatus": s["deployStatus"],
+        "adjuntos": s["adjuntos"], "tareas": s["tareas"],
+        "prd": estado_documento(s["prd"].as_str()), "diseno": estado_documento(s["diseno"].as_str()), "plan": estado_documento(s["plan"].as_str()),
+        "leadHub": {}, "propuestas": [],
+    });
+    if let Some(l) = lead_id {
+        let filas = fetch_json(
+            &st.pool,
+            r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content, 'archivos', (SELECT COUNT(*) FROM "LeadHubFile" f WHERE f."hubId" = h.id))), '[]'::jsonb)
+                 FROM "LeadHub" h WHERE h."leadId" = $1"#,
+            &[B::T(l.into())],
+        )
+        .await?;
+        for f in filas.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            let fase = f["phase"].as_str().unwrap_or_default();
+            let chars = crate::routes::aichat::texto_fase(f["content"].as_str().unwrap_or("")).trim().chars().count();
+            ctx["leadHub"][fase] = json!({ "chars": chars, "archivos": f["archivos"] });
+        }
+        ctx["propuestas"] = fetch_json(
+            &st.pool,
+            r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', id, 'title', title, 'status', status::text, 'amount', amount) ORDER BY "updatedAt" DESC), '[]'::jsonb) FROM "Proposal" WHERE "leadId" = $1"#,
+            &[B::T(l.into())],
+        )
+        .await?;
+    }
+    Ok(ctx)
 }
 
 // ── Quién actúa ─────────────────────────────────────────────────────────────────────────────
@@ -543,6 +707,7 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
     }
     .unwrap_or(Value::Null);
     let puede = se.is_admin() || se.is_service;
+    let ctx = contexto_recursos(&st, &id, sol["leadId"].as_str()).await?;
 
     let Some(est) = cargar(&st, &id).await? else {
         let sugerida = match lead["status"].as_str() {
@@ -552,8 +717,13 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
             },
             None => FASE_ARRANQUE.to_string(),
         };
+        // Vista previa: las 12 fases tal como serían, todas pendientes, para poder verlas antes de iniciar.
+        let mut previa = vista_fases(&BASE, &sugerida, "EN_CURSO", &criterios_vacios(&BASE), &[], &ctx);
+        for f in previa.iter_mut() {
+            f["estado"] = json!("PENDIENTE");
+        }
         return Ok(Json(json!({
-            "iniciado": false, "solucion": sol, "lead": lead, "puedeAprobar": puede, "faseSugerida": sugerida,
+            "iniciado": false, "solucion": sol, "lead": lead, "puedeAprobar": puede, "faseSugerida": sugerida, "fases": previa,
             "plantilla": { "codigo": BASE["codigo"], "nombre": BASE["nombre"], "descripcion": BASE["descripcion"], "fases": lista(&BASE).len() },
         })));
     };
@@ -584,14 +754,14 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
         "iniciado": true, "solucion": sol, "lead": lead, "puedeAprobar": puede, "esSuperadmin": se.role == "SUPERADMIN",
         "plantilla": { "codigo": def["codigo"], "nombre": def["nombre"], "version": def["version"] },
         "estado": estado, "faseActual": actual,
-        "fases": vista_fases(def, actual, estado, &est["criterios"], &acts),
+        "fases": vista_fases(def, actual, estado, &est["criterios"], &acts, &ctx),
         "historial": hist,
         "ventaConfirmada": indice(def, actual).map(|i| !es_preventa(def, i)).unwrap_or(false),
     })))
 }
 
 /// Inicia el motor de una Solución en la fase que corresponde al estado de su lead. Devuelve la fase.
-async fn iniciar_para(st: &AppState, id: &str, a: &Actor) -> Result<String, ApiError> {
+async fn iniciar_para(st: &AppState, id: &str, a: &Actor, elegida: Option<&str>) -> Result<String, ApiError> {
     validar_plantilla(&BASE).map_err(|e| ApiError::internal(format!("Plantilla inválida: {e}")))?;
     let def: &Value = &BASE;
     let lead_id = lead_de(st, id).await?;
@@ -599,12 +769,14 @@ async fn iniciar_para(st: &AppState, id: &str, a: &Actor) -> Result<String, ApiE
         return Err(ApiError::not_found("Proyecto no encontrado"));
     }
     // Sin lead no hay preventa: el proyecto arranca en la fase de arranque.
-    let (fase, estado) = match &lead_id {
+    let mut estado_lead: Option<(String, Option<String>)> = None;
+    let (mut fase, mut estado) = match &lead_id {
         None => (FASE_ARRANQUE.to_string(), "EN_CURSO"),
         Some(l) => {
             let lead = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('status', status::text, 'outcome', outcome) FROM "Lead" WHERE id = $1"#, &[B::T(l.clone())])
                 .await?
                 .unwrap_or(Value::Null);
+            estado_lead = Some((lead["status"].as_str().unwrap_or("NEW").to_string(), lead["outcome"].as_str().map(String::from)));
             match destino_de_lead(def, lead["status"].as_str().unwrap_or("NEW"), lead["outcome"].as_str()) {
                 Destino::Fase(c) => (c, "EN_CURSO"),
                 Destino::Ganado => (FASE_ARRANQUE.to_string(), "EN_CURSO"),
@@ -613,6 +785,23 @@ async fn iniciar_para(st: &AppState, id: &str, a: &Actor) -> Result<String, ApiE
             }
         }
     };
+    // Fase elegida por una persona (por ejemplo, un proyecto que ya venía avanzado): debe ser coherente con el lead.
+    if let Some(clave) = elegida.filter(|c| !c.is_empty()) {
+        let i = indice(def, clave).ok_or_else(|| ApiError::bad_request("Esa fase no existe"))?;
+        if estado != "EN_CURSO" {
+            return Err(ApiError::bad_request("El lead está perdido: el proyecto no se puede iniciar en otra fase"));
+        }
+        let ganado = matches!(&estado_lead, Some((s, Some(o))) if s == "RESULT" && o == "WON");
+        let cerrado = matches!(&estado_lead, Some((s, _)) if s == "RESULT");
+        if es_preventa(def, i) && cerrado {
+            return Err(ApiError::bad_request("El lead ya tiene resultado: no se puede volver a la preventa"));
+        }
+        if !es_preventa(def, i) && estado_lead.is_some() && !ganado {
+            return Err(ApiError::bad_request("La venta aún no está confirmada: solo se puede iniciar en una fase de preventa"));
+        }
+        fase = clave.to_string();
+        estado = "EN_CURSO";
+    }
     let n = exec(
         &st.pool,
         r#"INSERT INTO "ProyectoFase" ("solucionId", plantilla, definicion, "faseActual", estado, criterios, "createdAt", "updatedAt")
@@ -623,18 +812,23 @@ async fn iniciar_para(st: &AppState, id: &str, a: &Actor) -> Result<String, ApiE
     if n == 0 {
         return Err(ApiError::bad_request("Este proyecto ya tiene el motor de fases iniciado"));
     }
-    historial(st, id, &fase, "INICIO", a, Some("Motor de fases iniciado")).await;
+    historial(st, id, &fase, "INICIO", a, Some(if elegida.is_some() { "Motor de fases iniciado en una fase elegida" } else { "Motor de fases iniciado" })).await;
     if let Some(i) = indice(def, &fase) {
         if estado == "EN_CURSO" {
             crear_actividades(st, id, def, i).await;
+            if es_preventa(def, i) {
+                if let (Some(l), Some(ls)) = (&lead_id, def["fases"][i]["leadStatus"].as_str()) {
+                    poner_estado_lead(st, l, ls, a).await;
+                }
+            }
         }
     }
     Ok(fase)
 }
 
-async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(_body): Json<Value>) -> ApiResult<Json<Value>> {
+async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
     let a = exigir_puede(&se)?;
-    let fase = iniciar_para(&st, &id, &a).await?;
+    let fase = iniciar_para(&st, &id, &a, s_no_vacio(&body, "fase").as_deref()).await?;
     Ok(Json(json!({ "ok": true, "faseActual": fase })))
 }
 
@@ -661,7 +855,7 @@ pub async fn proyecto_para_lead(st: &AppState, lead_id: &str, a_id: &str, a_nomb
     let sol = asegurar_solucion(st, lead_id).await?;
     if cargar(st, &sol).await?.is_none() {
         let a = Actor { id: (!a_id.is_empty()).then(|| a_id.to_string()), nombre: if a_nombre.is_empty() { "Sistema".into() } else { a_nombre.into() }, super_admin: false };
-        iniciar_para(st, &sol, &a).await?;
+        iniciar_para(st, &sol, &a, None).await?;
     }
     Ok(sol)
 }
@@ -865,17 +1059,60 @@ mod tests {
     }
 
     #[test]
+    fn cada_fase_dice_donde_esta_lo_suyo() {
+        let ctx = json!({
+            "solucionId": "S1", "leadId": "L1", "repositorio": "acme/app", "deployUrl": null, "deployStatus": null, "adjuntos": 2,
+            "tareas": { "total": 4, "hechas": 4, "enCurso": 0, "fallidas": 0 },
+            "prd": estado_documento(Some(r#"{"estadoDocumento":"APROBADO","resumenEjecutivo":"x","requisitos":[{"backlogItemId":"a"},{"backlogItemId":""}]}"#)),
+            "diseno": estado_documento(Some("{}")), "plan": estado_documento(None),
+            "leadHub": { "NEW": { "chars": 120, "archivos": 1 } },
+            "propuestas": [{ "id": "P9", "status": "SENT" }],
+        });
+        let f = |c: &str| lista(&BASE)[indice(&BASE, c).unwrap()].clone();
+        let r = resolver_recursos(&f("identificacion"), &ctx);
+        assert_eq!(r[0]["href"], "/leads/L1/hub");
+        assert_eq!(r[0]["nivel"], "ok");
+        assert!(r[0]["estado"].as_str().unwrap().contains("1 archivo"));
+        let contacto = resolver_recursos(&f("contacto"), &ctx);
+        assert_eq!(contacto[0]["nivel"], "vacio", "una etapa sin nota se dice");
+        let prop = resolver_recursos(&f("propuesta"), &ctx);
+        assert_eq!(prop[0]["href"], "/proposals/P9");
+        assert!(prop[0]["estado"].as_str().unwrap().contains("Enviada"));
+        let arr = resolver_recursos(&f("arranque"), &ctx);
+        assert_eq!(arr[0]["estado"], "Aprobado · 1/2 requisitos con tarea");
+        assert_eq!(arr[0]["href"], "/solutions/pilots/S1?seccion=prd");
+        assert_eq!(arr[2]["panel"], "adjuntos");
+        let dis = resolver_recursos(&f("diseno_plan"), &ctx);
+        assert_eq!(dis[0]["nivel"], "vacio");
+        assert_eq!(dis[1]["nivel"], "vacio");
+        assert_eq!(dis[2]["nivel"], "ok");
+        let sin_lead = resolver_recursos(&f("identificacion"), &json!({ "solucionId": "S1", "leadId": null }));
+        assert_eq!(sin_lead[0]["estado"], "Sin lead");
+        assert!(estado_documento(Some("{}"))["tiene"] == false && estado_documento(Some("no es json"))["tiene"] == false);
+    }
+
+    #[test]
+    fn la_validacion_exige_recursos_conocidos() {
+        let mut p = BASE.clone();
+        p["fases"][0]["recursos"][0]["tipo"] = json!("NADA");
+        assert!(validar_plantilla(&p).is_err());
+        let mut p = BASE.clone();
+        p["fases"][3]["recursos"] = json!(null);
+        assert!(validar_plantilla(&p).is_err());
+    }
+
+    #[test]
     fn la_vista_marca_hechas_actual_y_pendientes() {
         let g = criterios_vacios(&BASE);
         let acts = vec![json!({ "fase": "diagnostico", "clave": "acta_requisitos", "backlogItemId": "x", "taskCode": null, "status": "DONE", "assigneeName": null })];
-        let v = vista_fases(&BASE, "diagnostico", "EN_CURSO", &g, &acts);
+        let v = vista_fases(&BASE, "diagnostico", "EN_CURSO", &g, &acts, &json!({}));
         assert_eq!(v.len(), 12);
         assert_eq!(v[0]["estado"], "HECHA");
         assert_eq!(v[2]["estado"], "ACTUAL");
         assert_eq!(v[3]["estado"], "PENDIENTE");
         assert_eq!(v[2]["actividades"]["total"], 3);
         assert_eq!(v[2]["actividades"]["hechas"], 1);
-        assert_eq!(vista_fases(&BASE, "negociacion", "CERRADO_PERDIDO", &g, &[])[5]["estado"], "CERRADA");
-        assert!(vista_fases(&BASE, "entrega_cierre", "COMPLETADO", &g, &[]).iter().all(|f| f["estado"] == "HECHA"));
+        assert_eq!(vista_fases(&BASE, "negociacion", "CERRADO_PERDIDO", &g, &[], &json!({}))[5]["estado"], "CERRADA");
+        assert!(vista_fases(&BASE, "entrega_cierre", "COMPLETADO", &g, &[], &json!({})).iter().all(|f| f["estado"] == "HECHA"));
     }
 }
