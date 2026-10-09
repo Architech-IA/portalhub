@@ -35,7 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/backlog/solution", get(soluciones_arbol))
         .route("/api/backlog/logs", get(logs_listar).post(logs_crear))
         .route("/api/backlog/sprint/{sprint_id}/graph", get(sprint_grafo))
-        .route("/api/backlog/{id}", put(item_actualizar).delete(item_eliminar))
+        .route("/api/backlog/{id}", get(item_obtener).put(item_actualizar).delete(item_eliminar))
         .route("/api/backlog/{id}/executions", get(ejecuciones_listar).post(ejecucion_crear))
         .route("/api/backlog/{id}/resultado", axum::routing::patch(resultado_guardar))
 }
@@ -44,6 +44,13 @@ pub fn router() -> Router<AppState> {
 /// Ítem de backlog con `solucion` y `sprint` anidados (alias de la tabla: `b`). Se quitan las
 /// dos columnas que existen en la base pero no en el esquema de Prisma.
 const ITEM_JSON: &str = r#"(to_jsonb(b) - 'createdByAgentId' - 'createdByAgentName') || jsonb_build_object(
+    'solucion', (SELECT jsonb_build_object('id', so.id, 'nombre', so.nombre, 'tipo', so.tipo) FROM "Solucion" so WHERE so.id = b."solucionId"),
+    'sprint',   (SELECT jsonb_build_object('id', sp.id, 'sprintCode', sp."sprintCode", 'name', sp.name) FROM "Sprint" sp WHERE sp.id = b."sprintId"))"#;
+
+/// Lo mismo SIN `description` ni `resultado` (≈50 % del peso de la lista) y con un extracto de la descripción para las
+/// tarjetas del kanban. La ficha completa se pide aparte (`GET /api/backlog/{id}`).
+const ITEM_LIGERO_JSON: &str = r#"(to_jsonb(b) - 'createdByAgentId' - 'createdByAgentName' - 'description' - 'resultado') || jsonb_build_object(
+    'descripcionResumen', left(b.description, 160),
     'solucion', (SELECT jsonb_build_object('id', so.id, 'nombre', so.nombre, 'tipo', so.tipo) FROM "Solucion" so WHERE so.id = b."solucionId"),
     'sprint',   (SELECT jsonb_build_object('id', sp.id, 'sprintCode', sp."sprintCode", 'name', sp.name) FROM "Sprint" sp WHERE sp.id = b."sprintId"))"#;
 
@@ -92,9 +99,16 @@ async fn orion_sprint_asignado(st: &AppState, mensaje: &str, nombre: &str, codig
 /// Última lista de ítems (ver `fetch_json_cacheado`): el backlog pesa ~1,3 MB y se pide por polling.
 static CACHE: std::sync::LazyLock<crate::util::CacheJson> = std::sync::LazyLock::new(Default::default);
 
-async fn items_listar(State(st): State<AppState>, _s: Session) -> ApiResult<Json<std::sync::Arc<Value>>> {
-    let sql = format!(r#"SELECT COALESCE(jsonb_agg({ITEM_JSON} ORDER BY b."createdAt" ASC), '[]'::jsonb) FROM "BacklogItem" b"#);
-    Ok(Json(crate::util::fetch_json_cacheado(&st.pool, &CACHE, "items", &sql, &[]).await?))
+async fn items_listar(State(st): State<AppState>, _s: Session, Query(q): Query<HashMap<String, String>>) -> ApiResult<Json<std::sync::Arc<Value>>> {
+    let ligero = q.get("ligero").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let (json, clave) = if ligero { (ITEM_LIGERO_JSON, "items-ligero") } else { (ITEM_JSON, "items") };
+    let sql = format!(r#"SELECT COALESCE(jsonb_agg({json} ORDER BY b."createdAt" ASC), '[]'::jsonb) FROM "BacklogItem" b"#);
+    Ok(Json(crate::util::fetch_json_cacheado(&st.pool, &CACHE, clave, &sql, &[]).await?))
+}
+
+/// Un ítem completo (la ficha lo pide al abrirse cuando la lista vino en modo ligero).
+async fn item_obtener(State(st): State<AppState>, _s: Session, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    item_por_id(&st, &id).await?.map(Json).ok_or_else(|| ApiError::not_found("No encontrado"))
 }
 
 async fn item_por_id(st: &AppState, id: &str) -> Result<Option<Value>, sqlx::Error> {
@@ -199,7 +213,11 @@ async fn item_actualizar(State(st): State<AppState>, sesion: Session, Path(id): 
     if let Some(t) = s(&body, "title") {
         up.set("title", B::T(t));
     }
-    up.set("description", B::OT(s_o_nulo(&body, "description")));
+    // Si el pedido no trae `description` (la lista ligera no la incluye y la pantalla devuelve el ítem tal cual) se conserva;
+    // Next la ponía en NULL. Un `description` explícito (texto, vacío o null) se guarda como siempre.
+    if body.get("description").is_some() {
+        up.set("description", B::OT(s_o_nulo(&body, "description")));
+    }
     if let Some(Value::String(r)) = body.get("resultado") {
         up.set("resultado", B::T(r.clone()));
     }
