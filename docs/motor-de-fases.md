@@ -72,3 +72,16 @@ conoce: solo las usa portalhub. Se aplican con `psql -f` (nunca `prisma db push 
 
 Bandeja de aprobaciones y cartera de proyectos, dos ambientes por proyecto (demo vs producción), costos de
 preventa por sprint, contexto del lead para los agentes, escalera de demo, plantillas de migración/implementación.
+
+## Portada del Motor (Oficina > Motor)
+
+Una sola pantalla (`GET /api/motor/resumen`, `routes/central.rs`; vista `oficina/motor/MotorView.tsx` en el portal) que junta:
+
+- **Cartera:** cada proyecto con motor de fases, su fase, el avance de su puerta y sus tareas (hechas, corriendo, fallidas, bloqueadas).
+- **Esperan a una persona:** puertas abiertas; las que ya tienen todos los criterios se pueden aprobar desde ahí (las de resultado Ganado/Perdido se deciden en el proyecto).
+- **Agentes y cola:** lo que corre (arrancó hace menos de 2 h), lo fallido o bloqueado, lo atascado (IN_PROGRESS sin ejecución reciente, o ejecución RUNNING vieja) y la cola del Harness (`/queues`, con timeout; si no contesta se avisa).
+- **Uso de tokens** por proyecto, de `TaskExecution.artifacts.usage`.
+
+Es de solo lectura salvo el botón Aprobar, que llama a `fases/avanzar`. Se actualiza sola cada 20 s.
+Límite conocido: no sabe si los workers están vivos (corren como otro usuario y no emiten señal).
+Prueba: `tools/parity/motor_resumen.js`.

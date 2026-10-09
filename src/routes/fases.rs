@@ -44,11 +44,11 @@ const FASE_ARRANQUE: &str = "arranque";
 static BASE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILLA_JSON).expect("plantilla de fases inválida"));
 
 // ── Plantilla (funciones puras) ─────────────────────────────────────────────────────────────
-fn lista(def: &Value) -> &[Value] {
+pub(super) fn lista(def: &Value) -> &[Value] {
     def["fases"].as_array().map(|a| a.as_slice()).unwrap_or(&[])
 }
 
-fn indice(def: &Value, clave: &str) -> Option<usize> {
+pub(super) fn indice(def: &Value, clave: &str) -> Option<usize> {
     lista(def).iter().position(|f| f["clave"] == clave)
 }
 
@@ -164,7 +164,7 @@ fn criterios_vacios(def: &Value) -> Value {
 }
 
 /// Criterios de una fase con su estado guardado: `[{texto, ok, por, en}]`.
-fn criterios_fase(def: &Value, guardados: &Value, idx: usize) -> Vec<Value> {
+pub(super) fn criterios_fase(def: &Value, guardados: &Value, idx: usize) -> Vec<Value> {
     let Some(f) = lista(def).get(idx) else { return vec![] };
     let g = guardados.get(f["clave"].as_str().unwrap_or_default()).and_then(|v| v.as_array());
     f["puerta"]["criterios"]
