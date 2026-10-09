@@ -116,6 +116,12 @@ node tools/parity/parity2.js all2     # bloques 1-2, tanda 3 y 4
 node tools/parity/auth.js             # autenticación y sesiones intercambiables
 ```
 
+### Vigilancia y respaldo
+
+Por cron en el VPS: `deploy/ops/vigilar.sh` (cada minuto; avisa en la campana del portal a los ADMIN cuando cae o se recupera
+portalhub, el Motor, Next, el sitio, el disco o un respaldo) y `deploy/ops/backup-config.sh` (diario; configuración de
+portalhub, Nginx, workers y las 3 últimas versiones del binario). Detalle, pruebas y cómo restaurar: `deploy/ops/README.md`.
+
 ### Revertir
 
 - **Un área**: añadir en `/etc/nginx/portalhub-routes.conf`, antes de `location /api/`, un
