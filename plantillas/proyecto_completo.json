@@ -1,0 +1,166 @@
+{
+  "codigo": "PROYECTO_COMPLETO",
+  "nombre": "Proyecto completo (preventa y ejecución)",
+  "descripcion": "Ciclo de vida de un proyecto desde que es un lead hasta la entrega: 6 fases de preventa (las etapas del lead) y 6 de ejecución. Cada fase define sus actividades, sus entregables y la puerta (criterios y aprobador) para pasar a la siguiente.",
+  "version": 1,
+  "fases": [
+    {
+      "clave": "identificacion", "numero": 1, "bloque": "PREVENTA", "nombre": "Identificación", "leadStatus": "NEW",
+      "objetivo": "Decidir si el lead vale la pena y cuánto esfuerzo de preventa se justifica.",
+      "actividades": [
+        { "clave": "ficha_cliente", "titulo": "Investigar la empresa y armar la ficha del cliente", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "MEDIUM",
+          "descripcion": "Reunir giro, tamaño, señales de necesidad, posibles decisores y antecedentes públicos. Dejar la ficha en el Lead Hub." },
+        { "clave": "go_no_go", "titulo": "Decidir si se sigue con el lead y fijar el tope de esfuerzo de preventa", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Decisión de una persona: seguir o descartar, y cuántas horas o cuánto costo se está dispuesto a invertir antes de la venta." }
+      ],
+      "entregables": ["Ficha del cliente", "Decisión sigue / no sigue", "Tope de esfuerzo de preventa"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "COMERCIAL", "criterios": ["Existe la ficha del cliente", "Hay una decisión de seguir con el lead", "Está fijado el tope de esfuerzo de preventa"] }
+    },
+    {
+      "clave": "contacto", "numero": 2, "bloque": "PREVENTA", "nombre": "Contacto", "leadStatus": "CONTACTED",
+      "objetivo": "Primer acercamiento y reunión de diagnóstico agendada.",
+      "actividades": [
+        { "clave": "briefing_contacto", "titulo": "Preparar el briefing para el primer contacto", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "MEDIUM",
+          "descripcion": "Resumen del cliente, hipótesis de necesidad, mensaje de apertura y preguntas iniciales." },
+        { "clave": "agendar_reunion", "titulo": "Contactar al cliente y agendar la reunión de diagnóstico", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Primer contacto con el decisor y reunión de diagnóstico agendada en el Calendar." }
+      ],
+      "entregables": ["Briefing de contacto", "Reunión de diagnóstico agendada"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "COMERCIAL", "criterios": ["Hubo contacto con el decisor", "La reunión de diagnóstico está agendada"] }
+    },
+    {
+      "clave": "diagnostico", "numero": 3, "bloque": "PREVENTA", "nombre": "Diagnóstico", "leadStatus": "DIAGNOSIS",
+      "objetivo": "Entender el problema, los objetivos y las restricciones del cliente.",
+      "actividades": [
+        { "clave": "briefing_reunion", "titulo": "Preparar el briefing de la reunión de diagnóstico", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "MEDIUM",
+          "descripcion": "Contexto del cliente, preguntas de descubrimiento y puntos a validar." },
+        { "clave": "reunion_diagnostico", "titulo": "Realizar la reunión de diagnóstico con el cliente", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Reunión con el cliente. Se registra en el Calendar para que el acta quede ligada al lead." },
+        { "clave": "acta_requisitos", "titulo": "Generar el acta y extraer el dolor, los objetivos y los requisitos iniciales", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "A partir de la reunión: acta, dolor y objetivos del cliente, requisitos iniciales y compromisos adquiridos." }
+      ],
+      "entregables": ["Acta de la reunión", "Dolor y objetivos del cliente", "Requisitos iniciales"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_PREVENTA", "criterios": ["El acta está revisada por una persona", "Los requisitos iniciales están validados con el cliente", "Se definió qué mostrar en la demo (o por qué no hace falta)"] }
+    },
+    {
+      "clave": "demo", "numero": 4, "bloque": "PREVENTA", "nombre": "Demo / MVP", "leadStatus": "DEMO_VALIDATION",
+      "objetivo": "Probar el valor con el escalón de demo más barato que haga avanzar la venta.",
+      "actividades": [
+        { "clave": "definir_escalon", "titulo": "Definir el escalón de demo: resumen, presentación, prototipo o MVP", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Elegir lo más barato que logre avanzar la venta, dentro del tope de esfuerzo de preventa." },
+        { "clave": "construir_demo", "titulo": "Construir la demo o el MVP", "tipo": "AGENTE", "area": "Development", "backlogType": "FEATURE", "prioridad": "HIGH",
+          "descripcion": "Si es un MVP: crear el repositorio de esta Solución, armar un PRD corto y un sprint \"MVP\" en el Backlog y ejecutarlo con el Motor. Construirlo para que se quede: es la base del proyecto si se gana la venta. Usar solo datos de ejemplo, nunca datos reales del cliente." },
+        { "clave": "registro_compromisos", "titulo": "Registrar lo mostrado y lo prometido al cliente en la demo", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "MEDIUM",
+          "descripcion": "Lista de lo que se mostró y de los compromisos asumidos, para que el alcance del proyecto parta de lo acordado." }
+      ],
+      "entregables": ["Demo o MVP funcionando y desplegado (si aplica)", "Registro de lo mostrado y de los compromisos"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_TECNICO", "criterios": ["La demo se mostró al cliente", "Los compromisos quedaron registrados", "La demo usa solo datos de ejemplo"] }
+    },
+    {
+      "clave": "propuesta", "numero": 5, "bloque": "PREVENTA", "nombre": "Propuesta", "leadStatus": "PROPOSAL_SENT",
+      "objetivo": "Formalizar la oferta: alcance, estimación, precio y cronograma.",
+      "actividades": [
+        { "clave": "estimacion", "titulo": "Estimar esfuerzo, riesgos y costo", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "Estimación por requisito, riesgos principales, supuestos y rango de costo, apoyada en el acta, los requisitos y la demo." },
+        { "clave": "borrador_propuesta", "titulo": "Redactar el borrador de la propuesta", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "Propuesta con alcance, entregables, cronograma, precio y condiciones. Queda como borrador en Propuestas, versionada." },
+        { "clave": "revision_envio", "titulo": "Revisar, ajustar y enviar la propuesta al cliente", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Los agentes redactan; una persona revisa y envía. Nada sale al cliente sin aprobación humana." }
+      ],
+      "entregables": ["Estimación y riesgos", "Propuesta versionada (alcance, precio, cronograma)", "Propuesta enviada"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "DIRECCION", "criterios": ["La propuesta fue revisada por una persona", "El alcance y el precio están aprobados por dirección", "La propuesta fue enviada al cliente"] }
+    },
+    {
+      "clave": "negociacion", "numero": 6, "bloque": "PREVENTA", "nombre": "Negociación", "leadStatus": "NEGOTIATION",
+      "objetivo": "Cerrar condiciones y decidir el resultado: ganado o perdido.",
+      "actividades": [
+        { "clave": "seguimiento", "titulo": "Dar seguimiento al cliente y registrar las objeciones", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "MEDIUM",
+          "descripcion": "Borradores de seguimiento y respuestas a objeciones. Los mensajes los envía una persona." },
+        { "clave": "condiciones", "titulo": "Acordar las condiciones finales y registrar los compromisos", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Condiciones finales (alcance, precio, plazos) y compromisos que pasarán al proyecto." }
+      ],
+      "entregables": ["Propuesta final o contrato", "Compromisos registrados"],
+      "puerta": { "tipo": "RESULTADO", "aprobador": "DIRECCION", "criterios": ["Las condiciones finales están acordadas o la oportunidad se descartó", "Los compromisos están registrados"] }
+    },
+    {
+      "clave": "arranque", "numero": 7, "bloque": "EJECUCION", "nombre": "Arranque", "leadStatus": null,
+      "objetivo": "Convertir lo vendido en proyecto: alcance base, PRD completo y reunión de arranque.",
+      "actividades": [
+        { "clave": "prd_proyecto", "titulo": "Elaborar el PRD completo del proyecto a partir de actas, propuesta y MVP", "tipo": "AGENTE", "area": "Client Delivery", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "PRD versión 2: el de preventa queda guardado como versión 1. Incluye los compromisos registrados en la demo y la negociación." },
+        { "clave": "alcance_base", "titulo": "Fijar el alcance base según la propuesta aprobada", "tipo": "HUMANA", "area": "Client Delivery", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "El alcance base es la propuesta firmada; todo cambio posterior pasa por una solicitud de cambio." },
+        { "clave": "kickoff", "titulo": "Realizar la reunión de arranque con el cliente y acordar accesos y responsables", "tipo": "HUMANA", "area": "Client Delivery", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Reunión de arranque, responsables de cada lado, canales de comunicación y accesos necesarios." },
+        { "clave": "revisar_mvp", "titulo": "Revisar la calidad del MVP y planificar su endurecimiento", "tipo": "AGENTE", "area": "Quality & Testing", "backlogType": "TEST_QA", "prioridad": "HIGH",
+          "descripcion": "Solo si hubo MVP en preventa: revisar estructura, pruebas y seguridad, y proponer qué endurecer antes de sumar funciones." }
+      ],
+      "entregables": ["PRD completo (versión del proyecto)", "Alcance base", "Acta de arranque"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_PROYECTO", "criterios": ["El PRD del proyecto está aprobado", "El alcance base coincide con la propuesta", "Se hizo la reunión de arranque"] }
+    },
+    {
+      "clave": "diseno_plan", "numero": 8, "bloque": "EJECUCION", "nombre": "Diseño y plan", "leadStatus": null,
+      "objetivo": "Definir cómo se construye: diseño técnico, plan de ejecución y backlog.",
+      "actividades": [
+        { "clave": "diseno_tecnico", "titulo": "Elaborar el diseño técnico y la arquitectura", "tipo": "AGENTE", "area": "Development", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "Diseño técnico en la Solución (arquitectura, componentes, datos, integraciones y decisiones)." },
+        { "clave": "plan_ejecucion", "titulo": "Elaborar el plan de ejecución: estimación, riesgos, responsables y cronograma", "tipo": "AGENTE", "area": "Operations", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "Plan de ejecución en la Solución: QA, ambientes y despliegue, responsables, gestión de cambios y comunicación." },
+        { "clave": "backlog", "titulo": "Generar épicas, sprints y tareas a partir del PRD y el diseño", "tipo": "AGENTE", "area": "Development", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD." }
+      ],
+      "entregables": ["Diseño técnico", "Plan de ejecución", "Backlog con épicas y sprints"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_TECNICO", "criterios": ["El diseño técnico está aprobado", "El plan de ejecución está aprobado", "El backlog está creado y priorizado"] }
+    },
+    {
+      "clave": "construccion", "numero": 9, "bloque": "EJECUCION", "nombre": "Construcción", "leadStatus": null,
+      "objetivo": "Construir el producto en sprints, con revisión por sprint.",
+      "actividades": [
+        { "clave": "sprint_endurecimiento", "titulo": "Sprint de endurecimiento: pruebas, seguridad y refactor antes de sumar funciones", "tipo": "AGENTE", "area": "Development", "backlogType": "IMPROVEMENT", "prioridad": "HIGH",
+          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto." },
+        { "clave": "sprints", "titulo": "Ejecutar los sprints del backlog con revisión por sprint", "tipo": "HUMANA", "area": "Development", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "Los sprints y sus tareas se gestionan en Backlog y en la Sala de Control. Esta actividad se cierra cuando se completan." }
+      ],
+      "entregables": ["Producto construido y revisado por sprint", "Registro de solicitudes de cambio"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_TECNICO", "criterios": ["Todos los sprints previstos están cerrados", "Las solicitudes de cambio están resueltas", "El código está integrado en la rama principal"] }
+    },
+    {
+      "clave": "qa", "numero": 10, "bloque": "EJECUCION", "nombre": "QA y aceptación", "leadStatus": null,
+      "objetivo": "Comprobar que funciona y que el cliente lo acepta.",
+      "actividades": [
+        { "clave": "plan_pruebas", "titulo": "Elaborar y ejecutar el plan de pruebas", "tipo": "AGENTE", "area": "Quality & Testing", "backlogType": "TEST_QA", "prioridad": "HIGH",
+          "descripcion": "Pruebas funcionales y de regresión; informe con los hallazgos." },
+        { "clave": "uat", "titulo": "Realizar la aceptación con el cliente (UAT) y corregir los hallazgos", "tipo": "HUMANA", "area": "Client Delivery", "backlogType": "TASK", "prioridad": "HIGH",
+          "descripcion": "El cliente prueba y acepta. Los hallazgos se corrigen antes de pasar a producción." }
+      ],
+      "entregables": ["Informe de pruebas", "Acta de aceptación del cliente"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "CLIENTE", "criterios": ["Las pruebas críticas pasan", "El cliente firmó la aceptación", "No quedan defectos críticos abiertos"] }
+    },
+    {
+      "clave": "despliegue", "numero": 11, "bloque": "EJECUCION", "nombre": "Despliegue", "leadStatus": null,
+      "objetivo": "Poner el producto en producción.",
+      "actividades": [
+        { "clave": "entorno_produccion", "titulo": "Preparar el entorno de producción y cargar los datos reales", "tipo": "AGENTE", "area": "Infrastructure & DevOps", "backlogType": "INFRAESTRUCTURA", "prioridad": "HIGH",
+          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios." },
+        { "clave": "salida_produccion", "titulo": "Desplegar a producción y verificar el monitoreo", "tipo": "AGENTE", "area": "Infrastructure & DevOps", "backlogType": "INFRAESTRUCTURA", "prioridad": "HIGH",
+          "descripcion": "Despliegue, verificación posterior, monitoreo y plan de vuelta atrás probado." }
+      ],
+      "entregables": ["Producción funcionando", "Monitoreo y plan de vuelta atrás"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "LIDER_TECNICO", "criterios": ["El sistema funciona en producción", "El monitoreo está activo", "Existe un plan de vuelta atrás probado"] }
+    },
+    {
+      "clave": "entrega_cierre", "numero": 12, "bloque": "EJECUCION", "nombre": "Entrega y cierre", "leadStatus": null,
+      "objetivo": "Cerrar bien: entrega, capacitación y lecciones aprendidas.",
+      "actividades": [
+        { "clave": "paquete_entrega", "titulo": "Armar el paquete de entrega: documentación, manual y traspaso de accesos y repositorio", "tipo": "AGENTE", "area": "Client Delivery", "backlogType": "DOCUMENTACION", "prioridad": "HIGH",
+          "descripcion": "Documentación técnica y de usuario, manual de operación y checklist de traspaso (repositorio, accesos, dominios)." },
+        { "clave": "capacitacion", "titulo": "Capacitar al cliente y acordar el soporte posterior", "tipo": "HUMANA", "area": "Client Delivery", "backlogType": "TASK", "prioridad": "MEDIUM",
+          "descripcion": "Sesión de capacitación, garantía y condiciones de soporte." },
+        { "clave": "lecciones", "titulo": "Registrar las lecciones aprendidas, los costos y los tiempos reales", "tipo": "AGENTE", "area": "Operations", "backlogType": "DOCUMENTACION", "prioridad": "MEDIUM",
+          "descripcion": "Comparar lo estimado con lo real (tiempo y tokens) para mejorar las próximas propuestas." }
+      ],
+      "entregables": ["Paquete de entrega", "Acta de cierre", "Lecciones aprendidas"],
+      "puerta": { "tipo": "NORMAL", "aprobador": "CLIENTE", "criterios": ["El cliente recibió el paquete de entrega", "Se transfirió el repositorio y los accesos", "Se registraron las lecciones aprendidas"] }
+    }
+  ]
+}

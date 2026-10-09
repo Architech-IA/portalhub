@@ -293,6 +293,8 @@ async fn actualizar(
         log_activity(&st.pool, "UPDATED", &format!("actualizó el lead {empresa}"), "lead", &id, Some(&actor), Some(&id))
             .await;
     }
+    let nombre_actor = if sesion.name.is_empty() { sesion.email.clone() } else { sesion.name.clone() };
+    crate::routes::fases::tras_actualizar_lead(&st, &id, &actor, &nombre_actor).await;
     Ok(Json(lead))
 }
 

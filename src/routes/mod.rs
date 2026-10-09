@@ -11,6 +11,7 @@ pub mod catalogos;
 pub mod council;
 pub mod dashboard;
 pub mod ejecutor;
+pub mod fases;
 pub mod gestion;
 pub mod hub;
 pub mod leads;
@@ -53,6 +54,7 @@ pub fn router() -> Router<AppState> {
         .merge(triggers::router())
         .merge(soluciones_ia::router())
         .merge(ejecutor::router())
+        .merge(fases::router())
         .merge(propuestas_docs::router())
         .merge(realtime::router())
         .merge(auth::router())
