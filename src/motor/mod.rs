@@ -7,6 +7,7 @@
 //! clave interna (`x-api-key`); sin ella todo responde 401.
 
 pub mod despliegue;
+pub mod diseno;
 pub mod ejecutor;
 pub mod grafo;
 pub mod repo;

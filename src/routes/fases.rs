@@ -41,8 +41,8 @@ pub fn router() -> Router<AppState> {
 const PLANTILLA_JSON: &str = include_str!("../../plantillas/proyecto_completo.json");
 const FASE_ARRANQUE: &str = "arranque";
 /// Lugares donde vive lo que produce una fase (cada tipo se resuelve en `resolver_recursos`).
-const TIPOS_RECURSO: [&str; 11] = [
-    "LEAD_HUB", "PROPUESTAS", "HUB_PRD", "HUB_DISENO", "HUB_PLAN", "HUB_CODIGO", "HUB_DESPLIEGUE", "BACKLOG", "SALA_CONTROL", "REUNIONES", "ADJUNTOS",
+const TIPOS_RECURSO: [&str; 12] = [
+    "LEAD_HUB", "PROPUESTAS", "HUB_PRD", "HUB_DISENO", "HUB_ARQUITECTURA", "HUB_PLAN", "HUB_CODIGO", "HUB_DESPLIEGUE", "BACKLOG", "SALA_CONTROL", "REUNIONES", "ADJUNTOS",
 ];
 
 static BASE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILLA_JSON).expect("plantilla de fases inválida"));
@@ -324,6 +324,10 @@ fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
                 },
                 "HUB_PRD" => { let (t, n) = texto_documento(&ctx["prd"], true); (t, n, Some(hub("prd")), None) }
                 "HUB_DISENO" => { let (t, n) = texto_documento(&ctx["diseno"], false); (t, n, Some(hub("diseno")), None) }
+                "HUB_ARQUITECTURA" => {
+                    let n = ctx["arquitecturaNodos"].as_i64().unwrap_or(0);
+                    if n > 0 { (format!("{n} componente{} en el diagrama", if n == 1 { "" } else { "s" }), "ok", Some(hub("arquitectura")), None) } else { ("Sin diagrama todavía".into(), "vacio", Some(hub("arquitectura")), None) }
+                }
                 "HUB_PLAN" => { let (t, n) = texto_documento(&ctx["plan"], false); (t, n, Some(hub("plan-ejec")), None) }
                 "HUB_CODIGO" => match ctx["repositorio"].as_str().filter(|r| !r.is_empty()) {
                     Some(r) => (format!("Repositorio: {r}"), "ok", Some(hub("codigo")), None),
@@ -367,7 +371,7 @@ fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
 async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> Result<Value, ApiError> {
     let s = fetch_json_opt(
         &st.pool,
-        r#"SELECT jsonb_build_object('repositorio', repositorio, 'deployUrl', "deployUrl", 'deployStatus', "deployStatus", 'prd', prd, 'diseno', "disenoTecnico", 'plan', "planEjecucion",
+        r#"SELECT jsonb_build_object('repositorio', repositorio, 'deployUrl', "deployUrl", 'deployStatus', "deployStatus", 'prd', prd, 'diseno', "disenoTecnico", 'plan', "planEjecucion", 'arquitectura', arquitectura,
                   'adjuntos', (SELECT COUNT(*) FROM "ProyectoAdjunto" a WHERE a."solucionId" = $1),
                   'tareas', (SELECT jsonb_build_object('total', COUNT(*), 'hechas', COUNT(*) FILTER (WHERE b.status = 'DONE'), 'enCurso', COUNT(*) FILTER (WHERE b.status = 'IN_PROGRESS'),
                                     'fallidas', COUNT(*) FILTER (WHERE b.status = 'FAILED')) FROM "BacklogItem" b WHERE b."solucionId" = $1))
@@ -379,6 +383,7 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
     let mut ctx = json!({
         "solucionId": sol, "leadId": lead_id, "repositorio": s["repositorio"], "deployUrl": s["deployUrl"], "deployStatus": s["deployStatus"],
         "adjuntos": s["adjuntos"], "tareas": s["tareas"],
+        "arquitecturaNodos": s["arquitectura"].as_str().and_then(|a| serde_json::from_str::<Value>(a).ok()).and_then(|a| a["nodes"].as_array().map(|n| n.len())).unwrap_or(0),
         "prd": estado_documento(s["prd"].as_str()), "diseno": estado_documento(s["diseno"].as_str()), "plan": estado_documento(s["plan"].as_str()),
         "leadHub": {}, "propuestas": [],
     });
@@ -1065,7 +1070,7 @@ mod tests {
             "tareas": { "total": 4, "hechas": 4, "enCurso": 0, "fallidas": 0 },
             "prd": estado_documento(Some(r#"{"estadoDocumento":"APROBADO","resumenEjecutivo":"x","requisitos":[{"backlogItemId":"a"},{"backlogItemId":""}]}"#)),
             "diseno": estado_documento(Some("{}")), "plan": estado_documento(None),
-            "leadHub": { "NEW": { "chars": 120, "archivos": 1 } },
+            "leadHub": { "NEW": { "chars": 120, "archivos": 1 } }, "arquitecturaNodos": 3,
             "propuestas": [{ "id": "P9", "status": "SENT" }],
         });
         let f = |c: &str| lista(&BASE)[indice(&BASE, c).unwrap()].clone();
@@ -1083,9 +1088,15 @@ mod tests {
         assert_eq!(arr[0]["href"], "/solutions/pilots/S1?seccion=prd");
         assert_eq!(arr[2]["panel"], "adjuntos");
         let dis = resolver_recursos(&f("diseno_plan"), &ctx);
-        assert_eq!(dis[0]["nivel"], "vacio");
+        assert_eq!(dis[0]["estado"], "3 componentes en el diagrama");
+        assert_eq!(dis[0]["href"], "/solutions/pilots/S1?seccion=arquitectura");
         assert_eq!(dis[1]["nivel"], "vacio");
-        assert_eq!(dis[2]["nivel"], "ok");
+        assert_eq!(dis[2]["nivel"], "vacio");
+        assert_eq!(dis[3]["nivel"], "ok");
+        let demo = resolver_recursos(&f("demo"), &ctx);
+        assert!(demo.iter().any(|r| r["tipo"] == "HUB_ARQUITECTURA") && demo.iter().any(|r| r["tipo"] == "HUB_DISENO"));
+        assert!(f("demo")["actividades"].as_array().unwrap().iter().any(|a| a["clave"] == "esbozo_arquitectura"));
+        assert!(f("construccion")["actividades"].as_array().unwrap().iter().any(|a| a["clave"] == "actualizar_diseno"));
         let sin_lead = resolver_recursos(&f("identificacion"), &json!({ "solucionId": "S1", "leadId": null }));
         assert_eq!(sin_lead[0]["estado"], "Sin lead");
         assert!(estado_documento(Some("{}"))["tiene"] == false && estado_documento(Some("no es json"))["tiene"] == false);

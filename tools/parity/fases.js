@@ -127,7 +127,7 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
       const m = (await q(`SELECT metadata FROM "Sprint" WHERE id = 'parity-sprint-a'`))[0].metadata
       ok(m?.origen === 'PREVENTA', 'el sprint existente quedó marcado como PREVENTA', m)
     }
-    ok((await q(`SELECT COUNT(*)::int n FROM "FaseActividad" WHERE "solucionId" = $1`, A.sol))[0].n === 19, '19 actividades creadas hasta arranque')
+    ok((await q(`SELECT COUNT(*)::int n FROM "FaseActividad" WHERE "solucionId" = $1`, A.sol))[0].n === 20, '20 actividades creadas hasta arranque')
     g = await fases(A.sol)
     ok(g.ventaConfirmada === true, 'la vista marca la venta como confirmada')
     r = await S('POST', `/api/proyectos/${A.sol}/fases/retroceder`, { fase: 'demo', motivo: 'x' })
@@ -207,7 +207,7 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
     r = await S('POST', `/api/proyectos/${Gl.sol}/fases/iniciar`, { fase: 'demo' })
     ok(r.status === 200 && r.j.faseActual === 'demo', 'inicia en la fase elegida (demo)', r)
     ok((await lead(Gl.id)).s === 'DEMO_VALIDATION', 'y el lead queda en Demo')
-    ok((await q(`SELECT COUNT(*)::int n FROM "BacklogItem" WHERE "solucionId" = $1`, Gl.sol))[0].n === 3, 'con las tres tareas de Demo')
+    ok((await q(`SELECT COUNT(*)::int n FROM "BacklogItem" WHERE "solucionId" = $1`, Gl.sol))[0].n === 4, 'con las cuatro tareas de Demo (incluye el esbozo de arquitectura)')
 
     console.log('— E: solución sin lead arranca en la fase de arranque')
     const eid = 'parity-sol-e'

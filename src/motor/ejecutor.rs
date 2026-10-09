@@ -113,7 +113,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
              'dependsOnTaskId', bi."dependsOnTaskId", 'areaId', bi."areaId", 'areaName', a.name,
              'sprintId', s.id, 'sprintName', s.name, 'sprintGoal', s.goal, 'sprintCode', s."sprintCode",
              'epicId', e.id, 'epicName', e.name, 'epicDescription', e.description,
-             'solId', sol.id, 'solNombre', sol.nombre, 'solDescripcion', sol.descripcion, 'solucionCode', sol."solucionCode")
+             'solId', sol.id, 'solNombre', sol.nombre, 'solDescripcion', sol.descripcion, 'solucionCode', sol."solucionCode", 'solucionDirecta', bi."solucionId")
            FROM "BacklogItem" bi
            LEFT JOIN "Sprint" s ON bi."sprintId" = s.id
            LEFT JOIN "Epic" e ON s."epicId" = e.id
@@ -139,6 +139,14 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
     estable.push(format!("SPRINT: [{}] {}", sg(&t, "sprintCode"), sg(&t, "sprintName")));
     if let Some(g) = so(&t, "sprintGoal").filter(|x| !x.is_empty()) {
         estable.push(format!("  Goal: {g}"));
+    }
+
+    // Diseño técnico y arquitectura documentados en el hub: la referencia que el agente debe respetar.
+    if let Some(sid) = so(&t, "solId").or_else(|| so(&t, "solucionDirecta")) {
+        if let Some(d) = super::diseno::cargar(st, &sid).await {
+            estable.push(String::new());
+            estable.push(d.texto);
+        }
     }
 
     let consejo = fetch_json(
@@ -294,7 +302,7 @@ async fn resolver_agente(st: &AppState, t: &Value) -> R<Agente> {
     Ok(Agente { id: "cmsii112p0001l0w1kysamv72".into(), nombre: "Atlas".into(), estrategia: "CODE" })
 }
 
-fn prd_html_a_plano(html: &str) -> String {
+pub(super) fn prd_html_a_plano(html: &str) -> String {
     static R1: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<br\s*/?>").expect("re"));
     static R2: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)</(p|div|li)>").expect("re"));
     static R3: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").expect("re"));
@@ -394,6 +402,10 @@ pub async fn despachar(st: &AppState, tarea: &str, guia_extra: Option<&str>) -> 
         Some((texto, crit)) => ["---".to_string(), "CRITERIO DE ACEPTACIÓN (del PRD — esta tarea implementa este requisito):".into(), texto.clone(), String::new(), format!("Se considera terminado cuando: {crit}")].join("\n"),
         None => String::new(),
     });
+    // Recordatorio al FINAL del prompt (donde el modelo lo tiene fresco): lo que está al principio de un contexto largo se pierde.
+    if contexto.contains(super::diseno::ENCABEZADO) {
+        partes.push(super::diseno::recordatorio());
+    }
     partes.push(match guia_extra.filter(|g| !g.is_empty()) {
         Some(g) => [
             "---",
@@ -522,8 +534,8 @@ struct Veredicto {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option<&str>, criterios: Vec<String>, resumen: &str, compilo: bool, archivos: &[String], cambios: &str) -> Veredicto {
-    let criterios = if criterios.is_empty() {
+async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option<&str>, criterios: Vec<String>, extra: Option<String>, resumen: &str, compilo: bool, archivos: &[String], cambios: &str) -> Veredicto {
+    let mut criterios = if criterios.is_empty() {
         vec![format!(
             "El resultado responde realmente a lo que pide la tarea \"{titulo}\"{}. No alcanza con que el resultado no este vacio — tiene que responder lo pedido.",
             descripcion.filter(|d| !d.is_empty()).map(|d| format!(": {d}")).unwrap_or_default()
@@ -531,6 +543,9 @@ async fn verificar(st: &AppState, tarea: &str, titulo: &str, descripcion: Option
     } else {
         criterios
     };
+    if let Some(e) = extra {
+        criterios.push(e);
+    }
     let contexto_codigo = if archivos.is_empty() && cambios.trim().is_empty() {
         String::new()
     } else {
@@ -671,7 +686,25 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                 _ => String::new(),
             };
             let criterio = criterio_prd(st, so(&t, "solucionId").as_deref(), so(&t, "prdRequisitoId").as_deref()).await;
-            let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), &c.resumen, chequeo.corrio, &archivos, &cambios).await;
+            // Diseño técnico del hub: criterio para el verificador, aviso si el esquema de Prisma se aparta y registro de cambios de diseño declarados.
+            let diseno = match so(&t, "solucionId") {
+                Some(sid) => super::diseno::cargar(st, &sid).await,
+                None => None,
+            };
+            if let Some(d) = &diseno {
+                if archivos.iter().any(|a| a.ends_with("prisma/schema.prisma")) {
+                    if let Ok(schema) = tokio::fs::read_to_string(raiz_chequeo.join("prisma/schema.prisma")).await {
+                        for aviso in super::diseno::avisos_schema(d, &schema) {
+                            emitir_traza(st, tarea, Some(exec_id), "info", &format!("diseño técnico — {aviso}")).await;
+                        }
+                    }
+                }
+            }
+            if let Some(pos) = c.resumen.find(super::diseno::MARCA_CAMBIO) {
+                let declarado: String = c.resumen[pos..].lines().next().unwrap_or("").chars().take(300).collect();
+                emitir_traza(st, tarea, Some(exec_id), "info", &format!("el agente declaró un cambio de diseño — conviene actualizar el Diseño técnico del hub: {declarado}")).await;
+            }
+            let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), diseno.as_ref().map(|d| d.criterio()), &c.resumen, chequeo.corrio, &archivos, &cambios).await;
             verificado = if v.paso { "DONE".into() } else { "FAILED".into() };
             checklist = v.checklist;
             if chequeo.corrio {

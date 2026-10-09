@@ -191,6 +191,15 @@
           "descripcion": "Elegir lo más barato que logre avanzar la venta, dentro del tope de esfuerzo de preventa."
         },
         {
+          "clave": "esbozo_arquitectura",
+          "titulo": "Esbozar la arquitectura y el modelo de datos del MVP",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Antes de construir: un diagrama de componentes en la pestaña Arquitectura del hub y las entidades con sus relaciones en Diseño técnico. Es la referencia que los agentes respetan al construir (entra al contexto de cada tarea y al verificador); se refina en la fase de Diseño y plan."
+        },
+        {
           "clave": "construir_demo",
           "titulo": "Construir la demo o el MVP",
           "tipo": "AGENTE",
@@ -211,7 +220,8 @@
       ],
       "entregables": [
         "Demo o MVP funcionando y desplegado (si aplica)",
-        "Registro de lo mostrado y de los compromisos"
+        "Registro de lo mostrado y de los compromisos",
+        "Esbozo de arquitectura y modelo de datos del MVP"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -219,7 +229,8 @@
         "criterios": [
           "La demo se mostró al cliente",
           "Los compromisos quedaron registrados",
-          "La demo usa solo datos de ejemplo"
+          "La demo usa solo datos de ejemplo",
+          "Existe un esbozo de arquitectura y modelo de datos del MVP"
         ]
       },
       "recursos": [
@@ -227,6 +238,16 @@
           "tipo": "LEAD_HUB",
           "etiqueta": "Lead Hub · Demo",
           "descripcion": "Qué se mostró y los compromisos asumidos con el cliente."
+        },
+        {
+          "tipo": "HUB_ARQUITECTURA",
+          "etiqueta": "Diagrama de arquitectura",
+          "descripcion": "Componentes y conexiones del MVP."
+        },
+        {
+          "tipo": "HUB_DISENO",
+          "etiqueta": "Modelo de datos del MVP",
+          "descripcion": "Entidades, atributos y relaciones: los agentes lo respetan."
         },
         {
           "tipo": "HUB_CODIGO",
@@ -484,10 +505,16 @@
         "criterios": [
           "El diseño técnico está aprobado",
           "El plan de ejecución está aprobado",
-          "El backlog está creado y priorizado"
+          "El backlog está creado y priorizado",
+          "El diagrama de arquitectura y el modelo de datos están completos"
         ]
       },
       "recursos": [
+        {
+          "tipo": "HUB_ARQUITECTURA",
+          "etiqueta": "Diagrama de arquitectura",
+          "descripcion": "Componentes y conexiones del proyecto."
+        },
         {
           "tipo": "HUB_DISENO",
           "etiqueta": "Diseño técnico",
@@ -530,11 +557,21 @@
           "backlogType": "TASK",
           "prioridad": "HIGH",
           "descripcion": "Los sprints y sus tareas se gestionan en Backlog y en la Sala de Control. Esta actividad se cierra cuando se completan."
+        },
+        {
+          "clave": "actualizar_diseno",
+          "titulo": "Actualizar el diseño técnico y el diagrama con lo realmente construido",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas."
         }
       ],
       "entregables": [
         "Producto construido y revisado por sprint",
-        "Registro de solicitudes de cambio"
+        "Registro de solicitudes de cambio",
+        "Diseño técnico y diagrama al día con lo construido"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -542,7 +579,8 @@
         "criterios": [
           "Todos los sprints previstos están cerrados",
           "Las solicitudes de cambio están resueltas",
-          "El código está integrado en la rama principal"
+          "El código está integrado en la rama principal",
+          "El diseño técnico y el diagrama reflejan lo que se construyó"
         ]
       },
       "recursos": [
@@ -560,6 +598,11 @@
           "tipo": "HUB_CODIGO",
           "etiqueta": "Código fuente",
           "descripcion": "Repositorio del proyecto."
+        },
+        {
+          "tipo": "HUB_DISENO",
+          "etiqueta": "Diseño técnico",
+          "descripcion": "Debe coincidir con el esquema y el código."
         }
       ]
     },
