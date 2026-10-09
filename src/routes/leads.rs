@@ -77,7 +77,7 @@ async fn listar(State(st): State<AppState>, _s: Session) -> ApiResult<Json<Value
     Ok(Json(v))
 }
 
-async fn crear(State(st): State<AppState>, _s: Session, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+async fn crear(State(st): State<AppState>, sesion: Session, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
     let (Some(company), Some(contacto), Some(email), Some(origen), Some(user_id)) = (
         s_no_vacio(&body, "companyName"),
         s(&body, "contactName"),
@@ -116,7 +116,7 @@ async fn crear(State(st): State<AppState>, _s: Session, Json(body): Json<Value>)
     };
 
     let outcome = if status == "RESULT" { s_o_nulo(&body, "outcome") } else { None };
-    let lead = fetch_json(
+    let mut lead = fetch_json(
         &st.pool,
         &format!(
             r#"WITH ins AS (
@@ -151,6 +151,12 @@ async fn crear(State(st): State<AppState>, _s: Session, Json(body): Json<Value>)
 
     let lid = lead["id"].as_str().unwrap_or_default().to_string();
     log_activity(&st.pool, "CREATED", &format!("creó el lead {company}"), "lead", &lid, Some(&user_id), Some(&lid)).await;
+    // Todo lead nace con su Solución y su motor de fases (el lead ya quedó guardado: si esto falla, se puede iniciar desde Oficina > Motor).
+    let nombre_actor = if sesion.name.is_empty() { sesion.email.clone() } else { sesion.name.clone() };
+    match crate::routes::fases::proyecto_para_lead(&st, &lid, &user_id, &nombre_actor).await {
+        Ok(sol) => lead["solucionId"] = json!(sol),
+        Err(e) => tracing::error!("iniciar el motor del lead nuevo: {}", e.1),
+    }
     Ok(Json(lead))
 }
 
@@ -272,9 +278,8 @@ async fn actualizar(
             tracing::error!("{e}");
             return Err(fallo());
         }
-    } else if exec(&st.pool, r#"DELETE FROM "Solucion" WHERE "leadId" = $1"#, &[B::T(id.clone())]).await.is_err() {
-        return Err(fallo());
     }
+    // Sin solución asociada la Solución se queda (con su motor de fases): ya no se borra al vaciar el campo.
 
     let actor = if sesion.id.is_empty() { s(&body, "userId").unwrap_or_default() } else { sesion.id.clone() };
     let nuevo = status_body.clone().or_else(|| previo.clone());

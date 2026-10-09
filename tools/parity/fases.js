@@ -28,15 +28,15 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
   }
   const S = (m, r, b) => llamar(cSuper, m, r, b)
   const leads = [], sols = []
+  let r0
 
   const nuevoLead = async (nombre) => {
-    const l = await S('POST', '/api/leads', { companyName: nombre, contactName: 'Prueba', email: 'prueba@example.test', source: 'Prueba', userId: u.id })
+    const l = await S('POST', '/api/leads', { companyName: nombre, contactName: 'Prueba', email: 'prueba@example.test', source: 'Prueba', userId: u.id, solucionAsociada: 'MVP', scope: 'Prueba del motor de fases', estimatedValue: 1000 })
     const id = l.j.id
     leads.push(id)
-    const put = await S('PUT', `/api/leads/${id}`, { status: 'NEW', solucionAsociada: 'MVP', scope: 'Prueba del motor de fases', estimatedValue: 1000 })
     const sol = (await q(`SELECT id FROM "Solucion" WHERE "leadId" = $1`, id))[0]
     sols.push(sol.id)
-    return { id, sol: sol.id, put }
+    return { id, sol: sol.id, put: l, solucionId: l.j.solucionId }
   }
   const lead = (id) => q(`SELECT status::text s, outcome, "lostReason" r, "solucionAsociada" a FROM "Lead" WHERE id = $1`, id).then(r => r[0])
   const fases = (sol) => S('GET', `/api/proyectos/${sol}/fases`).then(r => r.j)
@@ -46,11 +46,15 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
     console.log('— A: ciclo completo (preventa → venta → ejecución → cierre)')
     const A = await nuevoLead('PARITY-TEST Fases A')
     ok(A.put.status === 200, 'lead y solución de prueba creados', A.put)
+    ok(A.put.status === 200 && A.solucionId === A.sol, 'crear el lead devuelve su solucionId', A.put)
     let g = await fases(A.sol)
-    ok(g.iniciado === false && g.faseSugerida === 'identificacion', 'sin iniciar: sugiere identificación', g)
+    ok(g.iniciado === true && g.faseActual === 'identificacion', 'el lead nació con el motor iniciado en identificación', g)
+    ok((await q(`SELECT nombre, tipo FROM "Solucion" WHERE id = $1`, A.sol))[0].nombre === 'PARITY-TEST Fases A — MVP', 'la solución se llama «empresa — solución asociada»')
     ok((await llamar(cUser, 'POST', `/api/proyectos/${A.sol}/fases/iniciar`, {})).status === 403, 'un usuario normal no puede iniciar (403)')
-    ok((await S('POST', `/api/proyectos/${A.sol}/fases/iniciar`, {})).status === 200, 'iniciar')
     ok((await S('POST', `/api/proyectos/${A.sol}/fases/iniciar`, {})).status === 400, 'iniciar dos veces da 400')
+    r0 = await S('PUT', `/api/leads/${A.id}`, { status: 'NEW', solucionAsociada: '', scope: 'Prueba del motor de fases' })
+    ok(r0.status === 200 && (await q(`SELECT COUNT(*)::int n FROM "Solucion" WHERE id = $1`, A.sol))[0].n === 1 && (await fases(A.sol)).iniciado, 'vaciar «solución asociada» ya no borra la solución ni el motor')
+    await S('PUT', `/api/leads/${A.id}`, { status: 'NEW', solucionAsociada: 'MVP', scope: 'Prueba del motor de fases' })
     g = await fases(A.sol)
     ok(g.iniciado && g.faseActual === 'identificacion' && g.fases.length === 12, 'iniciado en identificación con 12 fases', g.faseActual)
     ok(g.fases[0].actividades.total === 2 && g.fases[0].actividades.items.every(i => i.creada), 'actividades de la fase 1 creadas')
@@ -139,7 +143,6 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
 
     console.log('— B: perdido desde el formulario del lead')
     const B = await nuevoLead('PARITY-TEST Fases B')
-    await S('POST', `/api/proyectos/${B.sol}/fases/iniciar`, {})
     r = await S('PUT', `/api/leads/${B.id}`, { status: 'RESULT', outcome: 'LOST', lostReason: 'PARITY-TEST precio', solucionAsociada: 'MVP' })
     g = await fases(B.sol)
     ok(r.status === 200 && g.estado === 'CERRADO_PERDIDO' && g.fases.find(f => f.estado === 'CERRADA'), 'LOST desde el lead cierra el proyecto', g.estado)
@@ -147,14 +150,12 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
 
     console.log('— C: ganado desde el formulario del lead')
     const C = await nuevoLead('PARITY-TEST Fases C')
-    await S('POST', `/api/proyectos/${C.sol}/fases/iniciar`, {})
     r = await S('PUT', `/api/leads/${C.id}`, { status: 'RESULT', outcome: 'WON', solucionAsociada: 'MVP' })
     g = await fases(C.sol)
     ok(r.status === 200 && g.faseActual === 'arranque' && g.estado === 'EN_CURSO', 'WON desde el lead lleva el proyecto a arranque', g.faseActual)
 
     console.log('— D: perdido desde la puerta')
     const D = await nuevoLead('PARITY-TEST Fases D')
-    await S('POST', `/api/proyectos/${D.sol}/fases/iniciar`, {})
     for (let i = 0; i < 5; i++) await S('POST', `/api/proyectos/${D.sol}/fases/avanzar`, { forzar: true })
     ok((await fases(D.sol)).faseActual === 'negociacion', 'D llegó a negociación')
     r = await S('POST', `/api/proyectos/${D.sol}/fases/avanzar`, { resultado: 'PERDIDO' })
@@ -162,6 +163,26 @@ const q = (sql, ...p) => prisma.$queryRawUnsafe(sql, ...p)
     r = await S('POST', `/api/proyectos/${D.sol}/fases/avanzar`, { resultado: 'PERDIDO', motivo: 'PARITY-TEST se fue con otro' })
     const ld = await lead(D.id)
     ok(r.status === 200 && ld.s === 'RESULT' && ld.outcome === 'LOST' && ld.r === 'PARITY-TEST se fue con otro', 'PERDIDO desde la puerta cierra el lead con su motivo', ld)
+
+    console.log('— F: lead anterior a «todo lead con motor» (sin proyecto) se inicia desde Oficina > Motor')
+    const F = await nuevoLead('PARITY-TEST Fases F')
+    await q(`DELETE FROM "BacklogItem" WHERE "solucionId" = $1`, F.sol)
+    await q(`DELETE FROM "Solucion" WHERE id = $1`, F.sol)
+    let res = (await S('GET', '/api/motor/resumen')).j
+    ok(res.leadsSinMotor.some(x => x.leadId === F.id), 'el lead aparece en «Leads sin motor»', res.totales)
+    ok((await llamar(cUser, 'POST', `/api/motor/leads/${F.id}/iniciar`, {})).status === 403, 'un usuario normal no puede iniciar el motor de un lead (403)')
+    r = await S('POST', `/api/motor/leads/${F.id}/iniciar`, {})
+    ok(r.status === 200 && !!r.j.solucionId, 'iniciar el lead crea su solución y arranca el motor', r)
+    sols.push(r.j.solucionId)
+    g = await fases(r.j.solucionId)
+    ok(g.iniciado && g.faseActual === 'identificacion', 'queda en identificación', g.faseActual)
+    ok((await q(`SELECT COUNT(*)::int n FROM "BacklogItem" WHERE "solucionId" = $1`, r.j.solucionId))[0].n === 2, 'con sus dos tareas')
+    ok((await q(`SELECT nombre FROM "Solucion" WHERE id = $1`, r.j.solucionId))[0].nombre === 'PARITY-TEST Fases F — MVP', 'solución creada con el nombre del lead')
+    res = (await S('GET', '/api/motor/resumen')).j
+    ok(!res.leadsSinMotor.some(x => x.leadId === F.id) && res.cartera.some(x => x.leadId === F.id), 'sale de «sin motor» y entra a la cartera')
+    r = await S('POST', `/api/motor/leads/${F.id}/iniciar`, {})
+    ok(r.status === 200, 'iniciar otra vez no falla ni duplica', r)
+    ok((await q(`SELECT COUNT(*)::int n FROM "BacklogItem" WHERE "solucionId" = $1`, r.j.solucionId))[0].n === 2, 'sigue habiendo solo dos tareas')
 
     console.log('— E: solución sin lead arranca en la fase de arranque')
     const eid = 'parity-sol-e'

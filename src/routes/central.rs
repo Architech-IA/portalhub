@@ -3,19 +3,26 @@
 //! agentes (corriendo, fallido, bloqueado, atascado), el estado de la cola del Harness y el uso de
 //! tokens por proyecto. Solo lectura: las acciones siguen en las rutas de cada parte.
 
-use axum::{extract::State, routing::get, Json, Router};
+use axum::{
+    extract::{Path, State},
+    routing::{get, post},
+    Json, Router,
+};
 use serde_json::{json, Value};
 
 use crate::{
-    error::ApiResult,
-    routes::fases::{criterios_fase, indice, lista},
+    error::{ApiError, ApiResult},
+    routes::fases::{criterios_fase, indice, lista, proyecto_para_lead},
     session::Session,
     state::AppState,
     util::{fetch_json, B},
 };
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/motor/resumen", get(resumen))
+    Router::new()
+        .route("/api/motor/resumen", get(resumen))
+        .route("/api/motor/leads/{id}/iniciar", post(iniciar_lead))
+        .route("/api/motor/leads/iniciar-todos", post(iniciar_todos))
 }
 
 /// Una ejecución que lleva más de esto en RUNNING se considera atascada.
@@ -23,7 +30,7 @@ const ATASCADA_HORAS: i64 = 2;
 
 const SQL_CARTERA: &str = r#"
 SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."enFaseDesde" DESC NULLS LAST), '[]'::jsonb) FROM (
-  SELECT s.id, s.nombre, s.tipo, s."solucionCode" AS codigo, pf."faseActual", pf.estado AS "estadoMotor", pf.definicion, pf.criterios,
+  SELECT s.id, s."leadId", s.nombre, s.tipo, s."solucionCode" AS codigo, pf."faseActual", pf.estado AS "estadoMotor", pf.definicion, pf.criterios,
          (SELECT MAX(h."createdAt") FROM "ProyectoFaseHistorial" h WHERE h."solucionId" = s.id) AS "enFaseDesde",
          l."companyName" AS cliente, l.status::text AS "leadStatus",
          (SELECT jsonb_build_object('total', COUNT(*), 'hechas', COUNT(*) FILTER (WHERE b.status = 'DONE'),
@@ -55,6 +62,13 @@ SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."startedAt"), '[]'::jsonb) FROM
       OR EXISTS (SELECT 1 FROM "TaskExecution" e WHERE e."backlogItemId" = b.id AND e.status = 'RUNNING' AND e."startedAt" < NOW() - ($1::int * INTERVAL '1 hour'))
    LIMIT 20) x"#;
 
+/// Leads que todavía no tienen el motor de fases iniciado (los anteriores a que todo lead naciera con motor).
+const SQL_SIN_MOTOR: &str = r#"
+SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."createdAt" DESC), '[]'::jsonb) FROM (
+  SELECT l.id AS "leadId", l."companyName" AS empresa, l.status::text AS status, l.outcome, l."createdAt", s.id AS "solucionId"
+    FROM "Lead" l LEFT JOIN "Solucion" s ON s."leadId" = l.id LEFT JOIN "ProyectoFase" p ON p."solucionId" = s.id
+   WHERE p."solucionId" IS NULL ORDER BY l."createdAt" DESC LIMIT 50) x"#;
+
 const SQL_COSTO: &str = r#"
 SELECT jsonb_build_object(
   'ejecuciones', (SELECT COUNT(*) FROM "TaskExecution"),
@@ -79,7 +93,7 @@ fn fila_cartera(p: &Value) -> Value {
     let crit = criterios_fase(def, &p["criterios"], idx);
     let ok = crit.iter().filter(|c| c["ok"] == true).count();
     json!({
-        "id": p["id"], "nombre": p["nombre"], "tipo": p["tipo"], "codigo": p["codigo"], "cliente": p["cliente"], "leadStatus": p["leadStatus"],
+        "id": p["id"], "leadId": p["leadId"], "nombre": p["nombre"], "tipo": p["tipo"], "codigo": p["codigo"], "cliente": p["cliente"], "leadStatus": p["leadStatus"],
         "estadoMotor": p["estadoMotor"], "faseClave": actual, "faseNumero": f["numero"], "faseNombre": f["nombre"], "bloque": f["bloque"],
         "totalFases": lista(def).len(),
         "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "ok": ok, "total": crit.len(), "lista": !crit.is_empty() && ok == crit.len() },
@@ -107,7 +121,7 @@ async fn resumen(State(st): State<AppState>, se: Session) -> ApiResult<Json<Valu
     let problemas = fetch_json(&st.pool, SQL_PROBLEMAS, &[]).await?;
     let atascadas = fetch_json(&st.pool, SQL_ATASCADAS, &[B::I(ATASCADA_HORAS)]).await?;
     let costo = fetch_json(&st.pool, SQL_COSTO, &[]).await?;
-    let sin_motor = crate::util::fetch_i64(&st.pool, r#"SELECT COUNT(*) FROM "Solucion" s WHERE NOT EXISTS (SELECT 1 FROM "ProyectoFase" p WHERE p."solucionId" = s.id) AND s."leadId" IS NOT NULL"#, &[]).await?;
+    let sin_motor = fetch_json(&st.pool, SQL_SIN_MOTOR, &[]).await?;
 
     // Cola del Harness: si no contesta, se dice (los workers que sacan de esa cola dependen de ella).
     let url = std::env::var("HARNESS_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8767".to_string());
@@ -125,15 +139,54 @@ async fn resumen(State(st): State<AppState>, se: Session) -> ApiResult<Json<Valu
         "totales": {
             "proyectos": cartera.len(), "enCurso": en_curso,
             "porAprobar": aprobaciones.iter().filter(|a| a["lista"] == true).count(),
-            "sinMotor": sin_motor,
+            "sinMotor": sin_motor.as_array().map(|a| a.len()).unwrap_or(0),
             "corriendo": corriendo.as_array().map(|a| a.len()).unwrap_or(0),
             "problemas": problemas.as_array().map(|a| a.len()).unwrap_or(0) + atascadas.as_array().map(|a| a.len()).unwrap_or(0),
         },
         "cartera": cartera,
+        "leadsSinMotor": sin_motor,
         "aprobaciones": aprobaciones,
         "ejecucion": { "corriendo": corriendo, "problemas": problemas, "atascadas": atascadas, "atascadaHoras": ATASCADA_HORAS, "harness": harness },
         "costo": costo,
     })))
+}
+
+fn nombre_de(se: &Session) -> String {
+    if se.name.is_empty() { se.email.clone() } else { se.name.clone() }
+}
+
+/// Crea la Solución del lead (si falta) e inicia su motor de fases. Para los leads anteriores a "todo lead nace con motor".
+async fn iniciar_lead(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(_b): Json<Value>) -> ApiResult<Json<Value>> {
+    if !(se.is_admin() || se.is_service) {
+        return Err(ApiError::forbidden("Solo un administrador puede iniciar el motor"));
+    }
+    let sol = proyecto_para_lead(&st, &id, &se.id, &nombre_de(&se)).await?;
+    Ok(Json(json!({ "ok": true, "solucionId": sol })))
+}
+
+/// Inicia el motor de todos los leads que aún no lo tienen y siguen abiertos (los que ya tienen resultado se dejan).
+async fn iniciar_todos(State(st): State<AppState>, se: Session, Json(_b): Json<Value>) -> ApiResult<Json<Value>> {
+    if !(se.is_admin() || se.is_service) {
+        return Err(ApiError::forbidden("Solo un administrador puede iniciar el motor"));
+    }
+    let pendientes = fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(l.id), '[]'::jsonb) FROM "Lead" l LEFT JOIN "Solucion" s ON s."leadId" = l.id LEFT JOIN "ProyectoFase" p ON p."solucionId" = s.id
+            WHERE p."solucionId" IS NULL AND l.status::text <> 'RESULT'"#,
+        &[],
+    )
+    .await?;
+    let (mut iniciados, mut errores) = (0, 0);
+    for l in pendientes.as_array().cloned().unwrap_or_default() {
+        match proyecto_para_lead(&st, l.as_str().unwrap_or_default(), &se.id, &nombre_de(&se)).await {
+            Ok(_) => iniciados += 1,
+            Err(e) => {
+                errores += 1;
+                tracing::error!("iniciar el motor del lead: {}", e.1);
+            }
+        }
+    }
+    Ok(Json(json!({ "ok": true, "iniciados": iniciados, "errores": errores })))
 }
 
 #[cfg(test)]

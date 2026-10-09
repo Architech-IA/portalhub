@@ -239,12 +239,13 @@ async fn convertir(State(st): State<AppState>, sesion: Session, Json(body): Json
                 .await?
             }
         };
+        let lead_nuevo = new_id();
         exec(
             &st.pool,
             r#"INSERT INTO "Lead" (id, "companyName", "contactName", email, phone, status, source, "estimatedValue", "userId", "clienteId", "createdAt", "updatedAt")
                VALUES ($1, $2, '', $3, $4, 'NEW', 'Prospecting', 0, $5, $6, NOW(), NOW())"#,
             &[
-                B::T(new_id()),
+                B::T(lead_nuevo.clone()),
                 B::T(nombre),
                 B::T(cliente["email"].as_str().unwrap_or("").into()),
                 B::OT(s(lugar, "phone").filter(|p| !p.is_empty())),
@@ -253,6 +254,9 @@ async fn convertir(State(st): State<AppState>, sesion: Session, Json(body): Json
             ],
         )
         .await?;
+        if let Err(e) = crate::routes::fases::proyecto_para_lead(&st, &lead_nuevo, &usuario, &sesion.name).await {
+            tracing::error!("iniciar el motor del lead convertido: {}", e.1);
+        }
         creados += 1;
     }
     Ok(Json(json!({ "created": creados, "skipped": omitidos.len(), "skippedNames": omitidos })))

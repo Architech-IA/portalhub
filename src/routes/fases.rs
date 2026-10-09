@@ -492,7 +492,7 @@ pub async fn tras_actualizar_lead(st: &AppState, lead_id: &str, a_id: &str, a_no
 }
 
 async fn sincronizar_desde_lead(st: &AppState, lead_id: &str, a_id: &str, a_nombre: &str) -> Result<(), ApiError> {
-    let Some(sol) = fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE "leadId" = $1"#, &[B::T(lead_id.into())]).await? else { return Ok(()) };
+    let sol = proyecto_para_lead(st, lead_id, a_id, a_nombre).await?;
     let Some(est) = cargar(st, &sol).await? else { return Ok(()) };
     if est["estado"] != "EN_CURSO" {
         return Ok(());
@@ -590,12 +590,12 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
     })))
 }
 
-async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(_body): Json<Value>) -> ApiResult<Json<Value>> {
-    let a = exigir_puede(&se)?;
+/// Inicia el motor de una Solución en la fase que corresponde al estado de su lead. Devuelve la fase.
+async fn iniciar_para(st: &AppState, id: &str, a: &Actor) -> Result<String, ApiError> {
     validar_plantilla(&BASE).map_err(|e| ApiError::internal(format!("Plantilla inválida: {e}")))?;
     let def: &Value = &BASE;
-    let lead_id = lead_de(&st, &id).await?;
-    if fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await?.is_none() {
+    let lead_id = lead_de(st, id).await?;
+    if fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE id = $1"#, &[B::T(id.to_string())]).await?.is_none() {
         return Err(ApiError::not_found("Proyecto no encontrado"));
     }
     // Sin lead no hay preventa: el proyecto arranca en la fase de arranque.
@@ -617,19 +617,53 @@ async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>
         &st.pool,
         r#"INSERT INTO "ProyectoFase" ("solucionId", plantilla, definicion, "faseActual", estado, criterios, "createdAt", "updatedAt")
            VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW()) ON CONFLICT ("solucionId") DO NOTHING"#,
-        &[B::T(id.clone()), B::T(def["codigo"].as_str().unwrap_or_default().into()), B::J(def.clone()), B::T(fase.clone()), B::T(estado.into()), B::J(criterios_vacios(def))],
+        &[B::T(id.to_string()), B::T(def["codigo"].as_str().unwrap_or_default().into()), B::J(def.clone()), B::T(fase.clone()), B::T(estado.into()), B::J(criterios_vacios(def))],
     )
     .await?;
     if n == 0 {
         return Err(ApiError::bad_request("Este proyecto ya tiene el motor de fases iniciado"));
     }
-    historial(&st, &id, &fase, "INICIO", &a, Some("Motor de fases iniciado")).await;
+    historial(st, id, &fase, "INICIO", a, Some("Motor de fases iniciado")).await;
     if let Some(i) = indice(def, &fase) {
         if estado == "EN_CURSO" {
-            crear_actividades(&st, &id, def, i).await;
+            crear_actividades(st, id, def, i).await;
         }
     }
+    Ok(fase)
+}
+
+async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(_body): Json<Value>) -> ApiResult<Json<Value>> {
+    let a = exigir_puede(&se)?;
+    let fase = iniciar_para(&st, &id, &a).await?;
     Ok(Json(json!({ "ok": true, "faseActual": fase })))
+}
+
+/// Toda oportunidad tiene su Solución: si el lead no la tiene, se crea (el nombre se ajusta cuando se elige la solución asociada).
+pub async fn asegurar_solucion(st: &AppState, lead_id: &str) -> Result<String, ApiError> {
+    exec(
+        &st.pool,
+        r#"INSERT INTO "Solucion" (id, nombre, descripcion, tipo, "valorEstimado", "leadId", "updatedAt")
+           SELECT $1, l."companyName" || ' — ' || COALESCE(NULLIF(l."solucionAsociada", ''), 'Por definir'), l.scope,
+                  CASE l."solucionAsociada" WHEN 'Demo' THEN 'DEMO' WHEN 'Partnership' THEN 'PARTNERSHIP' WHEN 'Products' THEN 'PRODUCT' WHEN 'Intern' THEN 'INTERN' ELSE 'PROJECT' END,
+                  l."estimatedValue", l.id, NOW()
+             FROM "Lead" l WHERE l.id = $2
+           ON CONFLICT ("leadId") DO NOTHING"#,
+        &[B::T(new_id()), B::T(lead_id.to_string())],
+    )
+    .await?;
+    fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE "leadId" = $1"#, &[B::T(lead_id.to_string())])
+        .await?
+        .ok_or_else(|| ApiError::not_found("Lead no encontrado"))
+}
+
+/// Deja al lead con su Solución y su motor de fases iniciado (no hace nada si ya los tiene). Devuelve el id de la Solución.
+pub async fn proyecto_para_lead(st: &AppState, lead_id: &str, a_id: &str, a_nombre: &str) -> Result<String, ApiError> {
+    let sol = asegurar_solucion(st, lead_id).await?;
+    if cargar(st, &sol).await?.is_none() {
+        let a = Actor { id: (!a_id.is_empty()).then(|| a_id.to_string()), nombre: if a_nombre.is_empty() { "Sistema".into() } else { a_nombre.into() }, super_admin: false };
+        iniciar_para(st, &sol, &a).await?;
+    }
+    Ok(sol)
 }
 
 async fn criterio(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {

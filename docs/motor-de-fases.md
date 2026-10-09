@@ -85,3 +85,10 @@ Una sola pantalla (`GET /api/motor/resumen`, `routes/central.rs`; vista `oficina
 Es de solo lectura salvo el botón Aprobar, que llama a `fases/avanzar`. Se actualiza sola cada 20 s.
 Límite conocido: no sabe si los workers están vivos (corren como otro usuario y no emiten señal).
 Prueba: `tools/parity/motor_resumen.js`.
+
+## Todo lead nace con motor
+
+- `POST /api/leads` (y la conversión desde Prospección) crean la Solución del lead y arrancan el motor (`fases::proyecto_para_lead`). La respuesta incluye `solucionId`. Guardar un lead también asegura su proyecto.
+- La Solución se llama «empresa — solución asociada» (o «Por definir»). Vaciar «solución asociada» al editar ya no borra la Solución.
+- Los leads anteriores se inician desde Oficina > Motor («Leads sin motor»): `POST /api/motor/leads/{id}/iniciar` y `POST /api/motor/leads/iniciar-todos` (este último deja fuera los que ya tienen resultado).
+- Oficina > Motor tiene «Nuevo lead», que usa el mismo `POST /api/leads`.
