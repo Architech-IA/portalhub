@@ -5,14 +5,15 @@ edition = "2021"
 description = "Backend JSON del portal de ArchiTechIA en Rust (migración progresiva desde Next.js/Prisma)"
 
 [dependencies]
-axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "process", "fs", "io-util", "sync"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json", "tls-rustls-ring-webpki"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 pdf-extract = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
+futures-util = "0.3"
 aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"

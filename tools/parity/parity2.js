@@ -52,7 +52,7 @@ async function llamar(base, metodo, url, ck, cuerpo, extra = {}) {
 
 // ── Normalización y comparación ─────────────────────────────────────────────────────────────
 const RE_CUID = /^c[a-z0-9]{20,}$/
-const RE_FECHA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+const RE_FECHA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|\+00:00)$/
 const RE_N_ID = /^n\d{10,}-\d+$/
 
 function norm(v, k, o) {
@@ -205,6 +205,47 @@ async function lecturas2(ck) {
     await get('GET /api/iniciativas/delete-requests', '/api/iniciativas/delete-requests')
     await get('GET /api/productos', '/api/productos')
   }
+  if (['t3', 'all2'].includes(area)) {
+    await get('GET /api/apps', '/api/apps')
+    await get('GET /api/apps?status=DRAFT', '/api/apps?status=DRAFT')
+    await get('GET /api/apps?q=a', '/api/apps?q=a')
+    for (const a of await sel('SELECT id, slug FROM "AppInstance" ORDER BY "createdAt" DESC LIMIT 2')) {
+      await get('GET app ' + a.slug, '/api/apps/' + a.id)
+      await get('GET app by-slug ' + a.slug, '/api/apps/by-slug/' + a.slug)
+    }
+    await get('GET app inexistente', '/api/apps/no-existe')
+    await get('GET app by-slug inexistente', '/api/apps/by-slug/no-existe')
+    await get('GET /api/app-types', '/api/app-types')
+    await get('GET /api/eventos-app', '/api/eventos-app')
+    await get('GET /api/eventos-app?take=3', '/api/eventos-app?take=3')
+    await get('GET /api/metrics/display', '/api/metrics/display', { drop: ['ts'] })
+    await get('GET /api/public-summary', '/api/public-summary', { drop: ['updated_at'] })
+    await get('GET /api/vps/history', '/api/vps/history')
+    await get('GET /api/vps/logs', '/api/vps/logs')
+    await get('GET /api/vps2/history', '/api/vps2/history')
+    await get('GET /api/vps2/logs', '/api/vps2/logs')
+    await get('GET /api/vps/stats', '/api/vps/stats', { esperada: 'métricas en vivo: cambian entre una llamada y otra' })
+    await get('GET /api/orion/messages', '/api/orion/messages')
+    await get('GET /api/orion/messages?areaId', '/api/orion/messages?areaId=947ca771-fe9e-4c3f-bfea-2ef2e27986c6')
+    await get('GET /api/council/proposals', '/api/council/proposals')
+    await get('GET /api/council/proposals?status=PENDING', '/api/council/proposals?status=PENDING')
+    for (const p of await sel('SELECT id FROM "CouncilProposal" ORDER BY "createdAt" DESC LIMIT 3')) {
+      await get('GET proposal ' + p.id.slice(0, 6), '/api/council/proposals/' + p.id)
+      await get('GET proposal messages ' + p.id.slice(0, 6), '/api/council/proposals/' + p.id + '/messages')
+      await get('GET proposal votes ' + p.id.slice(0, 6), '/api/council/proposals/' + p.id + '/votes')
+    }
+    await get('GET council proposal inexistente', '/api/council/proposals/no-existe')
+    await get('GET /api/council/status', '/api/council/status', { drop: ['key', 'latency'] })
+    await get('GET /api/council/actions', '/api/council/actions')
+    await get('GET /api/council/triggers', '/api/council/triggers')
+    await get('GET /api/council/traces', '/api/council/traces')
+    await get('GET /api/prospecting/stats', '/api/prospecting/stats', { drop: ['last30'] })
+    await get('GET /api/prospecting/autocomplete?q=bo', '/api/prospecting/autocomplete?q=bo')
+    await get('GET /api/prospecting/autocomplete?q=b', '/api/prospecting/autocomplete?q=b')
+    await get('GET /api/status', '/api/status', { drop: ['latency', 'status'] })
+    comparar('POST /api/prospecting/search (sin clave de Places)', await llamar(NEXT, 'POST', '/api/prospecting/search', ck, { city: 'Bogotá', category: 'cafe' }), await llamar(RS, 'POST', '/api/prospecting/search', ck, { city: 'Bogotá', category: 'cafe' }))
+    comparar('GET whatsapp (pública)', await llamar(NEXT, 'GET', '/api/council/triggers/whatsapp', undefined), await llamar(RS, 'GET', '/api/council/triggers/whatsapp', undefined))
+  }
   if (['a', 'all2'].includes(area)) {
     for (const u of ['/api/contabilidad/asientos', '/api/contabilidad/balance', '/api/contabilidad/balance?desde=2026-01-01&hasta=2026-12-31', '/api/contabilidad/cuentas', '/api/contabilidad/movimientos',
       '/api/rrhh/empleados', '/api/rrhh/nomina', '/api/rrhh/vacaciones', '/api/finanzas', '/api/inventario', '/api/proveedores', '/api/ordenes']) await get(`GET ${u}`, u)
@@ -246,6 +287,10 @@ async function limpiar2() {
   await run(`DELETE FROM "Proveedor" WHERE nombre LIKE '${TAG}%'`)
   await run(`DELETE FROM "Lead" WHERE "companyName" LIKE '${TAG}%'`)
   await run(`DELETE FROM "Cliente" WHERE nombre LIKE '${TAG}%'`)
+  await run(`DELETE FROM "AppInstance" WHERE name LIKE '${TAG}%'`)
+  await run(`DELETE FROM "AppEvento" WHERE "appSlug" LIKE 'parity-test-%'`)
+  await run(`DELETE FROM "CouncilProposal" WHERE title LIKE '${TAG}%'`)
+  await run(`DELETE FROM "AgentConversation" WHERE "channelId" = 'parity-bot-id'`)
   await run(`DELETE FROM "Activity" WHERE description LIKE '%${TAG}%' OR "userId" = 'parity-bot-id'`)
   await run(`DELETE FROM "User" WHERE email LIKE 'parity-%@example.test'`)
 }
@@ -455,6 +500,85 @@ async function main() {
         await P('DELETE orden', base, 'DELETE', `/api/ordenes/${od.json && od.json.id}`, ck, undefined, {})
         await P('DELETE proveedor', base, 'DELETE', `/api/proveedores/${pvid}`, ck, undefined, {})
       })
+    }
+    if (['t3', 'all2'].includes(area)) {
+      const tipo = (await sel('SELECT id FROM "AppType" WHERE "isActive" = true ORDER BY name LIMIT 1'))[0]
+      const KEY = { 'x-api-key': process.env.INTERNAL_API_KEY }
+      await flujo2('tanda 3: apps, eventos y bitácora de Orión', async (base, L) => {
+        const P = paso2(L)
+        await run('DELETE FROM "AppInstance" WHERE name LIKE $1', TAG + '%')
+        const a = await P('POST app', base, 'POST', '/api/apps', ck, { name: TAG + ' App', appTypeId: tipo.id, description: ' d ' }, {})
+        await P('POST app sin tipo', base, 'POST', '/api/apps', ck, { name: 'x' }, {})
+        await P('POST app tipo inexistente', base, 'POST', '/api/apps', ck, { name: 'x', appTypeId: 'no-existe' }, {})
+        const aid = a.json && a.json.id
+        await P('PATCH app', base, 'PATCH', '/api/apps/' + aid, ck, { name: ' ' + TAG + ' App 2 ', status: 'ACTIVE', description: '', config: { a: 1 } }, {})
+        await P('PATCH app (sin estado)', base, 'PATCH', '/api/apps/' + aid, ck, { description: 'otra' }, {})
+        await P('GET app', base, 'GET', '/api/apps/' + aid, ck, undefined, {})
+        await P('DELETE app', base, 'DELETE', '/api/apps/' + aid, ck, undefined, {})
+        await P('DELETE app otra vez', base, 'DELETE', '/api/apps/' + aid, ck, undefined, ESP_NEXT_500)
+        await P('POST evento sin clave', base, 'POST', '/api/eventos-app', undefined, { appSlug: 'x' }, { esperada: 'Next redirige a /login (middleware); Rust responde 401 JSON' })
+        await P('POST evento incompleto', base, 'POST', '/api/eventos-app', undefined, { appSlug: 'x' }, KEY, {})
+        await P('POST evento tipo inválido', base, 'POST', '/api/eventos-app', undefined, { appSlug: 'x', tipo: 'NOPE', actorNombre: 'a', actorUsuario: 'b' }, KEY, {})
+        await P('POST evento', base, 'POST', '/api/eventos-app', undefined, { appSlug: 'parity-test-app', tipo: 'VISTA', actorNombre: 'A', actorUsuario: 'a', entidad: 'e', metadata: { k: 1 }, ip: '10.0.0.1' }, KEY, {})
+        await P('GET eventos del slug', base, 'GET', '/api/eventos-app?appSlug=parity-test-app', ck, undefined, {})
+        await run('DELETE FROM "AppEvento" WHERE "appSlug" = $1', 'parity-test-app')
+        await P('POST orion/messages sin clave', base, 'POST', '/api/orion/messages', undefined, { message: 'x' }, { esperada: 'Next redirige a /login (middleware); Rust responde 401 JSON' })
+        await P('POST orion/messages', base, 'POST', '/api/orion/messages', undefined, { message: TAG + ' log', actionType: 'INFO', metadata: { a: 1 } }, KEY, {})
+        await P('POST orion/messages sin mensaje', base, 'POST', '/api/orion/messages', undefined, {}, KEY, {})
+      })
+
+      await flujo2('tanda 3: consejo', async (base, L) => {
+        const P = paso2(L)
+        const pr = await P('POST propuesta', base, 'POST', '/api/council/proposals', ck, { title: TAG + ' Consejo', description: 'd', items: [{ type: 'task', title: 't1' }], metadata: { x: 1 } }, {})
+        const id = pr.json && pr.json.id
+        await P('POST propuesta sin título', base, 'POST', '/api/council/proposals', ck, {}, {})
+        await P('GET propuesta', base, 'GET', '/api/council/proposals/' + id, ck, undefined, {})
+        await P('POST mensaje', base, 'POST', '/api/council/proposals/' + id + '/messages', ck, { agentId: 'agent_orion_001', agentName: 'Orión', agentSlug: 'orion', content: 'hola', round: 1 }, {})
+        await P('POST mensaje incompleto', base, 'POST', '/api/council/proposals/' + id + '/messages', ck, { agentId: 'x' }, {})
+        await P('GET mensajes', base, 'GET', '/api/council/proposals/' + id + '/messages', ck, undefined, {})
+        await P('POST voto', base, 'POST', '/api/council/proposals/' + id + '/votes', ck, { agentId: 'agent_orion_001', agentName: 'Orión', agentSlug: 'orion', vote: true, argument: 'ok', round: 1 }, {})
+        await P('POST voto (actualiza)', base, 'POST', '/api/council/proposals/' + id + '/votes', ck, { agentId: 'agent_orion_001', agentName: 'Orión', agentSlug: 'orion', vote: false, argument: 'no', round: 1 }, {})
+        await P('POST voto incompleto', base, 'POST', '/api/council/proposals/' + id + '/votes', ck, { agentId: 'x' }, {})
+        await P('GET votos', base, 'GET', '/api/council/proposals/' + id + '/votes', ck, undefined, {})
+        await P('GET propuesta con mensajes y votos', base, 'GET', '/api/council/proposals/' + id, ck, undefined, {})
+        await P('PATCH propuesta', base, 'PATCH', '/api/council/proposals/' + id, ck, { status: 'REVISED', round: 2 }, {})
+        await P('PATCH inexistente', base, 'PATCH', '/api/council/proposals/no-existe', ck, { status: 'X' }, {})
+        await P('DELETE propuesta', base, 'DELETE', '/api/council/proposals/' + id, ck, undefined, {})
+        await P('POST adjust inexistente', base, 'POST', '/api/council/proposals/no-existe/adjust/start', ck, {}, {})
+        await P('POST debate inexistente', base, 'POST', '/api/council/proposals/no-existe/debate/start', ck, {}, {})
+        await P('POST plan/start inexistente', base, 'POST', '/api/council/proposals/no-existe/plan/start', ck, {}, {})
+        await P('POST plan/approve inexistente', base, 'POST', '/api/council/proposals/no-existe/plan/approve', ck, {}, {})
+        await P('POST finalize inexistente', base, 'POST', '/api/council/proposals/no-existe/finalize', ck, {}, {})
+        await P('POST negotiate inexistente', base, 'POST', '/api/council/proposals/no-existe/negotiate', ck, {}, {})
+        await P('POST chat sin mensajes', base, 'POST', '/api/council/chat', ck, {}, {})
+        await P('POST extract sin mensajes', base, 'POST', '/api/council/chat/extract', ck, {}, {})
+        await P('POST actions approve inválida', base, 'POST', '/api/council/actions/x/zzz', ck, {}, {})
+        await P('POST run sin task', base, 'POST', '/api/council/run', ck, {}, {})
+      })
+
+      await flujo2('tanda 3: Orión y Prospector', async (base, L) => {
+        const P = paso2(L)
+        const ckBot = await cookie({ id: bot, name: TAG + ' bot', email: 'parity-bot@example.test', role: 'COLLABORATOR' })
+        await run('DELETE FROM "AgentConversation" WHERE "channelId" = $1', bot)
+        await run("INSERT INTO \"AgentConversation\" (id, \"agentSlug\", \"channelType\", \"channelId\", messages) VALUES ($1, 'orion', 'hub', $2, $3::jsonb)", 'ptconv-' + SUFIJO[base], bot, JSON.stringify([{ role: 'user', content: 'hola ' + TAG }, { role: 'assistant', content: 'respuesta' }]))
+        await P('GET historial orion (bot)', base, 'GET', '/api/orion/chat', ckBot, undefined, {})
+        await P('DELETE (cerrar sesión)', base, 'DELETE', '/api/orion/chat', ckBot, undefined, { drop: ['id', 'startedAt', 'endedAt'] })
+        const h = await P('GET historial tras cerrar', base, 'GET', '/api/orion/chat', ckBot, undefined, { drop: ['id', 'startedAt', 'endedAt'] })
+        const sid = h.json && h.json.sessions && h.json.sessions[0] && h.json.sessions[0].id
+        await P('PATCH reabrir sin id', base, 'PATCH', '/api/orion/chat', ckBot, {}, {})
+        await P('PATCH reabrir inexistente', base, 'PATCH', '/api/orion/chat', ckBot, { sessionId: 'no-existe' }, {})
+        await P('PATCH reabrir sesión', base, 'PATCH', '/api/orion/chat', ckBot, { sessionId: sid }, { drop: ['id', 'startedAt', 'endedAt'] })
+        await P('POST chat sin mensaje', base, 'POST', '/api/orion/chat', undefined, {}, {})
+        await run('DELETE FROM "AgentConversation" WHERE "channelId" = $1', bot)
+        await P('POST convert sin lugares', base, 'POST', '/api/prospecting/convert', ck, {}, {})
+        await P('POST convert', base, 'POST', '/api/prospecting/convert', ck, { places: [{ name: TAG + ' Lugar', types: ['restaurant_bar', 'food'], website: 'https://x.test', phone: '123' }, { name: TAG + ' Otro', types: [] }] }, {})
+        await P('POST convert repetido', base, 'POST', '/api/prospecting/convert', ck, { places: [{ name: TAG + ' Lugar', types: [] }] }, {})
+        await run("DELETE FROM \"Lead\" WHERE \"companyName\" LIKE '" + TAG + "%'")
+        await run("DELETE FROM \"Cliente\" WHERE nombre LIKE '" + TAG + "%'")
+      })
+    }
+    if (['t4', 'all2'].includes(area)) {
+      await require('./t4')({ flujo2, paso2, ck, run, sel, TAG, SUFIJO, CODIGO, NEXT, RS, llamar, comparar })
     }
   } finally {
     await limpiar2()

@@ -7,7 +7,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::{any, get, patch, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -15,7 +15,6 @@ use std::collections::HashMap;
 
 use crate::{
     error::{ApiError, ApiResult},
-    proxy,
     session::Session,
     state::AppState,
     util::{
@@ -30,7 +29,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions", get(sesiones_listar).post(sesion_crear))
         .route("/api/search", get(buscar))
         .route("/api/agents", get(agentes_listar).post(agente_crear))
-        .route("/api/agents/status", any(proxy::a_next))
         .route("/api/agents/{slug}", get(agente_obtener).put(agente_actualizar).delete(agente_desactivar))
         .route("/api/council/badge", get(insignia_consejo))
         .route("/api/user-stats", get(user_stats))
@@ -306,7 +304,7 @@ async fn user_stats(State(st): State<AppState>, _s: Session, Query(q): Query<Has
 }
 
 // ═══════════════════════════════ REPORTES ═══════════════════════════════
-fn dias_desde_civil(y: i64, m: i64, d: i64) -> i64 {
+pub fn dias_desde_civil(y: i64, m: i64, d: i64) -> i64 {
     // Algoritmo de Howard Hinnant (días desde 1970-01-01).
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -316,7 +314,7 @@ fn dias_desde_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-fn civil_desde_dias(z: i64) -> (i64, i64, i64) {
+pub fn civil_desde_dias(z: i64) -> (i64, i64, i64) {
     let z = z + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = z - era * 146097;

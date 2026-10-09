@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{any, get, patch, post, put},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -16,7 +16,6 @@ use std::collections::HashMap;
 
 use crate::{
     error::{ApiError, ApiResult},
-    proxy,
     session::Session,
     state::AppState,
     util::{
@@ -33,8 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proposals/{id}/tasks", get(ptareas_listar).post(ptarea_crear))
         .route("/api/proposals/{id}/tasks/{task_id}", patch(ptarea_marcar).delete(ptarea_eliminar))
         // Soluciones
-        .route("/api/soluciones", get(soluciones_listar).post(proxy::a_next))
-        .route("/api/soluciones/backfill", any(proxy::a_next))
+        .route("/api/soluciones", get(soluciones_listar).post(crate::routes::triggers::solucion_crear))
         .route("/api/soluciones/{id}", get(solucion_obtener).put(solucion_actualizar).delete(solucion_eliminar))
         // Iniciativas
         .route("/api/iniciativas", get(iniciativas_listar).post(iniciativa_crear))
@@ -212,7 +210,7 @@ async fn ptarea_eliminar(State(st): State<AppState>, _s: Session, Path((_id, tar
 }
 
 // ═══════════════════════════════ SOLUCIONES ═══════════════════════════════
-const SOLUCION_JSON: &str = r#"to_jsonb(so) || jsonb_build_object(
+pub const SOLUCION_JSON: &str = r#"to_jsonb(so) || jsonb_build_object(
     'lead', (SELECT jsonb_build_object('id', l.id, 'companyName', l."companyName", 'contactName', l."contactName", 'status', l.status) FROM "Lead" l WHERE l.id = so."leadId"))"#;
 
 async fn soluciones_listar(State(st): State<AppState>, _s: Session, req: Request) -> Response {
@@ -226,7 +224,26 @@ async fn soluciones_listar(State(st): State<AppState>, _s: Session, req: Request
     .await;
     match existe {
         Ok(Some(_)) => {}
-        Ok(None) => return proxy::a_next(req).await,
+        Ok(None) => {
+            // `ensureInternSolution`: la solución interna del portal se crea la primera vez.
+            let nombre = "Portal Interno ArchitechIA";
+            let r: Result<(), sqlx::Error> = async {
+                let codigo = crate::routes::council::codigo_solucion_unico(&st, &crate::routes::council::generar_codigo_solucion(nombre)).await?;
+                exec(
+                    &st.pool,
+                    r#"INSERT INTO "Solucion" (id, nombre, descripcion, tipo, estado, "valorEstimado", "solucionCode", "createdAt", "updatedAt")
+                       VALUES ($1, $2, 'Solución interna que agrupa el portal, herramientas y plataformas de ArchiTechIA.', 'INTERN', 'ACTIVO', 0, $3, NOW(), NOW())"#,
+                    &[B::T(new_id()), B::T(nombre.into()), B::T(codigo)],
+                )
+                .await?;
+                Ok(())
+            }
+            .await;
+            if let Err(e) = r {
+                tracing::error!("soluciones_listar (solución interna): {e}");
+                return ApiError::internal("Error interno").into_response();
+            }
+        }
         Err(e) => {
             tracing::error!("soluciones_listar: {e}");
             return ApiError::internal("Error interno").into_response();

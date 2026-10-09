@@ -8,8 +8,15 @@ pub struct Config {
     pub opencode_api_key: Option<String>,
     pub opencode_url: String,
     pub opencode_model: String,
+    /// Modelo por defecto de las rutas del consejo / motor (`OPENCODE_EXECUTOR_MODEL` en Next).
+    pub opencode_executor_model: String,
+    pub google_places_api_key: Option<String>,
     pub google_client_id: Option<String>,
     pub google_client_secret: Option<String>,
+    /// Agentes de métricas de los dos VPS (URL y token), si están configurados.
+    pub vps: [(Option<String>, Option<String>); 2],
+    pub github_token: Option<String>,
+    pub github_username: String,
     pub bind: String,
     pub port: u16,
 }
@@ -52,8 +59,16 @@ impl Config {
             opencode_url: opcional("OPENCODE_URL")
                 .unwrap_or_else(|| "https://opencode.ai/zen/go/v1/chat/completions".to_string()),
             opencode_model: opcional("OPENCODE_MODEL").unwrap_or_else(|| "qwen3.7-max".to_string()),
+            opencode_executor_model: opcional("OPENCODE_EXECUTOR_MODEL").unwrap_or_else(|| "qwen3.7-max".to_string()),
+            google_places_api_key: opcional("GOOGLE_PLACES_API_KEY"),
             google_client_id: opcional("GOOGLE_CLIENT_ID"),
             google_client_secret: opcional("GOOGLE_CLIENT_SECRET"),
+            vps: [
+                (opcional("VPS_METRICS_URL"), opcional("VPS_METRICS_TOKEN")),
+                (opcional("VPS2_METRICS_URL"), opcional("VPS2_METRICS_TOKEN")),
+            ],
+            github_token: opcional("GITHUB_TOKEN"),
+            github_username: opcional("GITHUB_USERNAME").unwrap_or_else(|| "Architech-IA".to_string()),
             bind: opcional("BIND").unwrap_or_else(|| "127.0.0.1".to_string()),
             port: opcional("PORT").and_then(|p| p.parse().ok()).unwrap_or(3100),
         })

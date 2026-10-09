@@ -5,7 +5,7 @@
 
 use axum::{
     extract::{Path, Query, State},
-    routing::{any, get, post, put},
+    routing::{get, post, put},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -13,7 +13,6 @@ use std::collections::HashMap;
 
 use crate::{
     error::{ApiError, ApiResult},
-    proxy,
     session::Session,
     state::AppState,
     util::{
@@ -28,11 +27,10 @@ const BACKLOG_HUB_AREA_ID: &str = "area_backlog_hub_001";
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/backlog", get(items_listar).post(item_crear))
-        .route("/api/backlog/epics", get(epics_listar).post(proxy::a_next).put(epic_actualizar).delete(epic_eliminar))
+        .route("/api/backlog/epics", get(epics_listar).post(crate::routes::triggers::epic_crear).put(epic_actualizar).delete(epic_eliminar))
         .route("/api/backlog/sprints", get(sprints_listar).post(sprint_crear).put(sprint_estado))
         .route("/api/backlog/sprints/edit", put(sprint_editar))
         .route("/api/backlog/sprints/{id}/areas", get(sprint_areas_obtener).put(sprint_areas_guardar))
-        .route("/api/backlog/sprints/{id}/approve", any(proxy::a_next))
         .route("/api/backlog/reorder", post(reordenar))
         .route("/api/backlog/solution", get(soluciones_arbol))
         .route("/api/backlog/logs", get(logs_listar).post(logs_crear))

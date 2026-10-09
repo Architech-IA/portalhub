@@ -3,6 +3,7 @@ mod error;
 mod extract;
 mod google;
 mod llm;
+mod motor;
 mod proxy;
 mod routes;
 mod session;
@@ -32,6 +33,9 @@ async fn main() {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
+
+    // Mismo binario, dos servicios: `PORTALHUB_MODE=motor` arranca el servicio privilegiado (ver motor/mod.rs).
+    let modo_motor = std::env::var("PORTALHUB_MODE").map(|m| m == "motor").unwrap_or(false);
 
     let cfg = match Config::from_env() {
         Ok(c) => Arc::new(c),
@@ -72,7 +76,7 @@ async fn main() {
     // haberla cerrado); en uso normal, la consulta sale directo.
     let pool = PgPoolOptions::new()
         .min_connections(2)
-        .max_connections(8)
+        .max_connections(if modo_motor { 4 } else { 8 })
         .acquire_timeout(Duration::from_secs(10))
         .test_before_acquire(false)
         .before_acquire(|conn, meta| {
@@ -99,14 +103,18 @@ async fn main() {
 
     let state = AppState { pool, cfg: cfg.clone(), http };
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .merge(routes::router())
-        // Lo que Rust aún no implementa se reenvía a Next (ver proxy.rs).
-        .fallback(proxy::a_next)
-        // Los archivos del hub de leads viajan en base64 dentro del JSON.
-        .layer(DefaultBodyLimit::max(40 * 1024 * 1024))
-        .with_state(state);
+    let app = if modo_motor {
+        Router::new().merge(motor::router(state.clone())).layer(DefaultBodyLimit::max(40 * 1024 * 1024)).with_state(state)
+    } else {
+        Router::new()
+            .route("/health", get(health))
+            .merge(routes::router())
+            // Lo que Rust aún no implementa se reenvía a Next (ver proxy.rs).
+            .fallback(proxy::a_next)
+            // Los archivos del hub de leads viajan en base64 dentro del JSON.
+            .layer(DefaultBodyLimit::max(40 * 1024 * 1024))
+            .with_state(state)
+    };
 
     let addr: SocketAddr = format!("{}:{}", cfg.bind, cfg.port).parse().unwrap_or_else(|e| {
         tracing::error!("dirección inválida: {e}");
@@ -116,7 +124,7 @@ async fn main() {
         tracing::error!("no se pudo abrir {addr}: {e}");
         std::process::exit(1);
     });
-    tracing::info!("portalhub escuchando en http://{addr}");
+    tracing::info!("{} escuchando en http://{addr}", if modo_motor { "portalhub-motor" } else { "portalhub" });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -124,4 +132,13 @@ async fn main() {
         })
         .await
         .expect("servidor");
+}
+
+#[cfg(test)]
+mod pruebas {
+    /// Armar el router falla (panic) si dos rutas chocan: se comprueba sin necesidad de base de datos.
+    #[test]
+    fn rutas_sin_conflicto() {
+        let _ = crate::routes::router();
+    }
 }

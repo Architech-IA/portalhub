@@ -3,15 +3,20 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
-/// Error de API con el mismo formato que devuelven hoy las rutas de Next: `{"error": "..."}`.
+/// Error de API con el mismo formato que devuelven hoy las rutas de Next: `{"error": "..."}`
+/// (más campos extra opcionales, p. ej. la versión vigente en un conflicto de edición).
 #[derive(Debug)]
-pub struct ApiError(pub StatusCode, pub String);
+pub struct ApiError(pub StatusCode, pub String, pub Option<Value>);
 
 impl ApiError {
     pub fn new(status: StatusCode, msg: impl Into<String>) -> Self {
-        Self(status, msg.into())
+        Self(status, msg.into(), None)
+    }
+    pub fn con_extra(mut self, extra: Value) -> Self {
+        self.2 = Some(extra);
+        self
     }
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self::new(StatusCode::BAD_REQUEST, msg)
@@ -35,7 +40,13 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        let mut cuerpo = json!({ "error": self.1 });
+        if let (Some(o), Some(Value::Object(extra))) = (cuerpo.as_object_mut(), self.2) {
+            for (k, v) in extra {
+                o.insert(k, v);
+            }
+        }
+        (self.0, Json(cuerpo)).into_response()
     }
 }
 

@@ -106,9 +106,11 @@ pub async fn fetch_i64(pool: &PgPool, sql: &str, binds: &[B]) -> Result<i64, sql
 // `to_jsonb` de un timestamp(3) las da sin zona y con fracción de largo variable. Se normalizan
 // al formato de JavaScript para que el frontend no note ninguna diferencia.
 static RE_FECHA: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$").expect("regex fecha"));
+    LazyLock::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+]00(:00)?)?$").expect("regex fecha"));
 
 fn normalizar_fecha(s: &str) -> String {
+    // Las columnas `timestamptz` (tablas del consejo) salen con sufijo +00:00; se descarta.
+    let s = s.strip_suffix("+00:00").or_else(|| s.strip_suffix("+00")).unwrap_or(s);
     let (base, frac) = s.split_once('.').unwrap_or((s, ""));
     let mut f: String = frac.chars().take(3).collect();
     while f.len() < 3 {

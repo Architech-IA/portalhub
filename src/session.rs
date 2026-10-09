@@ -170,3 +170,71 @@ impl FromRequestParts<AppState> for Session {
         })
     }
 }
+
+/// Sesión opcional: `None` si no hay una válida (para rutas que aceptan anónimos, como el chat
+/// público de Orión, pero que usan el usuario cuando lo hay).
+pub struct Opcional(pub Option<Session>);
+
+impl FromRequestParts<AppState> for Opcional {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
+        Ok(Opcional(Session::from_request_parts(parts, state).await.ok()))
+    }
+}
+
+/// Token de sesión (JWE) dentro de una cabecera `Cookie`, ya unido si vino partido en trozos.
+pub fn token_de_cabecera(header: &str) -> Option<String> {
+    token_de_cookies(header)
+}
+
+fn clave_derivada(secret: &str) -> Option<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(Some(b""), secret.as_bytes());
+    let mut clave = [0u8; 32];
+    hk.expand(b"NextAuth.js Generated Encryption Key", &mut clave).ok()?;
+    Some(clave)
+}
+
+/// `encode` de `next-auth/jwt`: JWE compacto (`dir` + `A256GCM`) con `iat`, `exp` y `jti`.
+pub fn cifrar_token(claims: &Value, secret: &str, max_edad_s: i64) -> Option<String> {
+    use rand::RngCore;
+    let ahora = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    let mut carga = claims.as_object()?.clone();
+    carga.insert("iat".into(), ahora.into());
+    carga.insert("exp".into(), (ahora + max_edad_s).into());
+    let mut jti = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut jti);
+    jti[6] = (jti[6] & 0x0f) | 0x40;
+    jti[8] = (jti[8] & 0x3f) | 0x80;
+    let h: Vec<String> = jti.iter().map(|x| format!("{x:02x}")).collect();
+    carga.insert("jti".into(), format!("{}-{}-{}-{}-{}", h[0..4].concat(), h[4..6].concat(), h[6..8].concat(), h[8..10].concat(), h[10..16].concat()).into());
+
+    let protegido = URL_SAFE_NO_PAD.encode(br#"{"alg":"dir","enc":"A256GCM"}"#);
+    let cipher = Aes256Gcm::new_from_slice(&clave_derivada(secret)?).ok()?;
+    let mut iv = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut iv);
+    let plano = serde_json::to_vec(&Value::Object(carga)).ok()?;
+    let mut cifrado = cipher.encrypt(Nonce::from_slice(&iv), Payload { msg: &plano, aad: protegido.as_bytes() }).ok()?;
+    let tag = cifrado.split_off(cifrado.len() - 16);
+    Some(format!("{protegido}..{}.{}.{}", URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(cifrado), URL_SAFE_NO_PAD.encode(tag)))
+}
+
+#[cfg(test)]
+mod pruebas {
+    use super::*;
+
+    #[test]
+    fn jwe_ida_y_vuelta() {
+        let claims = serde_json::json!({ "sub": "u1", "id": "u1", "role": "ADMIN", "name": "Ñandú", "email": "a@b.co" });
+        let t = cifrar_token(&claims, "secreto-de-prueba", 3600).expect("cifra");
+        assert_eq!(t.split('.').count(), 5);
+        let c = descifrar_token(&t, "secreto-de-prueba").expect("descifra");
+        assert_eq!(c["id"], "u1");
+        assert_eq!(c["name"], "Ñandú");
+        assert!(c["exp"].as_i64().unwrap() > c["iat"].as_i64().unwrap());
+        assert!(descifrar_token(&t, "otro-secreto").is_none());
+        // vencido
+        let v = cifrar_token(&claims, "s", -10).expect("cifra");
+        assert!(descifrar_token(&v, "s").is_none());
+    }
+}
