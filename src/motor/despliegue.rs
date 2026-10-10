@@ -275,7 +275,8 @@ pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
         let nuevo = format!("demo-{slug}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
         let puerto = puerto_libre(st).await?;
         sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &imagen, &repo.to_string_lossy()], None, 600).await?;
-        let mut args: Vec<String> = ["run", "-d", "--name", &nuevo, "-p", &format!("{puerto}:3000"), "--restart", "unless-stopped"].iter().map(|s| s.to_string()).collect();
+        // El puerto se publica SOLO en localhost: Nginx es quien atiende a internet (con HTTPS). Antes quedaba en 0.0.0.0 y la app respondía por HTTP plano.
+        let mut args: Vec<String> = ["run", "-d", "--name", &nuevo, "-p", &format!("127.0.0.1:{puerto}:3000"), "--restart", "unless-stopped"].iter().map(|s| s.to_string()).collect();
         if let Some(red) = sol["dbNetworkName"].as_str().filter(|x| !x.is_empty()) {
             args.extend(["--network".into(), red.to_string()]);
         }
