@@ -92,3 +92,20 @@ Prueba: `tools/parity/motor_resumen.js`.
 - La Solución se llama «empresa — solución asociada» (o «Por definir»). Vaciar «solución asociada» al editar ya no borra la Solución.
 - Los leads anteriores se inician desde Oficina > Motor («Leads sin motor»): `POST /api/motor/leads/{id}/iniciar` y `POST /api/motor/leads/iniciar-todos` (este último deja fuera los que ya tienen resultado).
 - Oficina > Motor tiene «Nuevo lead», que usa el mismo `POST /api/leads`.
+
+## Comercial e interno: el campo `tipo` decide
+
+La naturaleza de un proyecto sale del campo `tipo` de la Solución (no hay otro campo):
+
+| tipo | naturaleza | plantilla | cola del Harness |
+|---|---|---|---|
+| PROJECT, DEMO, PARTNERSHIP | COMERCIAL | `proyecto_completo` (12 fases: preventa → venta → ejecución) | HIGH |
+| PRODUCT, INTERN | INTERNO | `iniciativa_interna` (8 fases: Idea y problema → Caso de negocio y prioridad → Validación/MVP → Diseño y plan → Construcción → QA → Lanzamiento → Operación y medición) | MEDIUM |
+
+- Lo interno no tiene lead, venta ni cliente. Su primera puerta de peso es el **caso de negocio**: la aprueba Dirección, que además asigna capacidad. El QA lo acepta el dueño de la iniciativa (aprobador `DUENO`).
+- Los bloques de fases son `PREVENTA` (solo comercial), `DEFINICION` (solo interno) y `EJECUCION`. La puerta de resultado (venta ganada o perdida) existe únicamente si hay preventa.
+- Se crea con **Oficina › Motor › Nueva iniciativa** (`POST /api/motor/iniciativas`: nombre, tipo PRODUCT o INTERN, problema, dueño, beneficio y esfuerzo). Una Solución interna que ya existía se inicia desde su pestaña Fases y arranca en «Idea y problema».
+- Un proyecto sin lead cuyo tipo es PROJECT (comercial) sigue arrancando en Arranque.
+- Las tareas de un proyecto comercial entran a la cola con prioridad HIGH y las internas con MEDIUM (el Harness atiende HIGH, luego MEDIUM, luego LOW). No hay cuotas de capacidad todavía.
+- Las listas (Proyectos y la portada del Motor) se pueden filtrar por naturaleza y marcan lo interno.
+- Aviso de datos: hay soluciones de tipo PROJECT sin lead que en realidad son internas (Núcleo de Integraciones, Sistema Multi-Agente, Brand & Identity, Business Development). Cambiar su `tipo` a PRODUCT o INTERN las pasa a la plantilla interna.

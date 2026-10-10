@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::{
     error::{ApiError, ApiResult},
-    routes::fases::{criterios_fase, indice, lista, proyecto_para_lead},
+    routes::fases::{criterios_fase, indice, iniciar_solucion, lista, naturaleza_de_tipo, proyecto_para_lead},
     session::Session,
     state::AppState,
     util::{fetch_json, B},
@@ -23,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/motor/resumen", get(resumen))
         .route("/api/motor/leads/{id}/iniciar", post(iniciar_lead))
         .route("/api/motor/leads/iniciar-todos", post(iniciar_todos))
+        .route("/api/motor/iniciativas", post(crear_iniciativa))
 }
 
 /// Una ejecución que lleva más de esto en RUNNING se considera atascada.
@@ -93,7 +94,7 @@ pub(super) fn fila_cartera(p: &Value) -> Value {
     let crit = criterios_fase(def, &p["criterios"], idx);
     let ok = crit.iter().filter(|c| c["ok"] == true).count();
     json!({
-        "id": p["id"], "leadId": p["leadId"], "nombre": p["nombre"], "tipo": p["tipo"], "codigo": p["codigo"], "cliente": p["cliente"], "leadStatus": p["leadStatus"],
+        "id": p["id"], "leadId": p["leadId"], "nombre": p["nombre"], "tipo": p["tipo"], "naturaleza": naturaleza_de_tipo(p["tipo"].as_str().unwrap_or("PROJECT")), "codigo": p["codigo"], "cliente": p["cliente"], "leadStatus": p["leadStatus"],
         "estadoMotor": p["estadoMotor"], "faseClave": actual, "faseNumero": f["numero"], "faseNombre": f["nombre"], "bloque": f["bloque"],
         "totalFases": lista(def).len(),
         "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "ok": ok, "total": crit.len(), "lista": !crit.is_empty() && ok == crit.len() },
@@ -143,6 +144,10 @@ async fn resumen(State(st): State<AppState>, se: Session) -> ApiResult<Json<Valu
             "corriendo": corriendo.as_array().map(|a| a.len()).unwrap_or(0),
             "problemas": problemas.as_array().map(|a| a.len()).unwrap_or(0) + atascadas.as_array().map(|a| a.len()).unwrap_or(0),
         },
+        "porNaturaleza": {
+            "COMERCIAL": { "proyectos": cartera.iter().filter(|p| p["naturaleza"] == "COMERCIAL").count(), "enCurso": cartera.iter().filter(|p| p["naturaleza"] == "COMERCIAL" && p["estadoMotor"] == "EN_CURSO").count() },
+            "INTERNO": { "proyectos": cartera.iter().filter(|p| p["naturaleza"] == "INTERNO").count(), "enCurso": cartera.iter().filter(|p| p["naturaleza"] == "INTERNO" && p["estadoMotor"] == "EN_CURSO").count() },
+        },
         "cartera": cartera,
         "leadsSinMotor": sin_motor,
         "aprobaciones": aprobaciones,
@@ -187,6 +192,36 @@ async fn iniciar_todos(State(st): State<AppState>, se: Session, Json(_b): Json<V
         }
     }
     Ok(Json(json!({ "ok": true, "iniciados": iniciados, "errores": errores })))
+}
+
+/// «Nueva iniciativa»: crea una Solución interna (tipo PRODUCT o INTERN) y arranca su motor en la fase «Idea y problema».
+async fn crear_iniciativa(State(st): State<AppState>, se: Session, Json(b): Json<Value>) -> ApiResult<Json<Value>> {
+    if !(se.is_admin() || se.is_service) {
+        return Err(ApiError::forbidden("Solo un administrador puede crear iniciativas"));
+    }
+    let texto = |k: &str| b[k].as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let nombre = texto("nombre").ok_or_else(|| ApiError::bad_request("Falta el nombre de la iniciativa"))?;
+    let problema = texto("problema").ok_or_else(|| ApiError::bad_request("Falta describir el problema"))?;
+    let tipo = texto("tipo").unwrap_or_else(|| "PRODUCT".into());
+    if naturaleza_de_tipo(&tipo) != "INTERNO" || !matches!(tipo.as_str(), "PRODUCT" | "INTERN") {
+        return Err(ApiError::bad_request("El tipo de una iniciativa interna es PRODUCT o INTERN"));
+    }
+    let beneficio = b["beneficio"].as_f64().filter(|x| x.is_finite() && *x >= 0.0);
+    let mut descripcion = format!("Problema: {problema}");
+    for (etiqueta, clave) in [("Dueño", "duenio"), ("Beneficio esperado", "beneficioTexto"), ("Esfuerzo estimado", "esfuerzo")] {
+        if let Some(v) = texto(clave) {
+            descripcion.push_str(&format!("\n{etiqueta}: {v}"));
+        }
+    }
+    let id = crate::util::new_id();
+    crate::util::exec(
+        &st.pool,
+        r#"INSERT INTO "Solucion" (id, nombre, descripcion, tipo, "valorEstimado", empresa, "updatedAt") VALUES ($1, $2, $3, $4, $5, 'ArchitechIA', NOW())"#,
+        &[B::T(id.clone()), B::T(nombre), B::T(descripcion), B::T(tipo), B::F(beneficio.unwrap_or(0.0))],
+    )
+    .await?;
+    let fase = iniciar_solucion(&st, &id, &se.id, &nombre_de(&se)).await?;
+    Ok(Json(json!({ "ok": true, "solucionId": id, "faseActual": fase })))
 }
 
 #[cfg(test)]

@@ -1451,6 +1451,7 @@ async fn proyectos_listar(State(st): State<AppState>, o: Opcional) -> ApiResult<
         for it in items.iter_mut() {
             let f = it["id"].as_str().and_then(|id| por_id.get(id)).cloned().unwrap_or(Value::Null);
             it["fase"] = f;
+            it["naturaleza"] = json!(crate::routes::fases::naturaleza_de_tipo(it["tipo"].as_str().unwrap_or("PROJECT")));
         }
     }
     Ok(Json(v))

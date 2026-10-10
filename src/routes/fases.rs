@@ -46,6 +46,26 @@ const TIPOS_RECURSO: [&str; 12] = [
 ];
 
 static BASE: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILLA_JSON).expect("plantilla de fases inválida"));
+const PLANTILLA_INTERNA_JSON: &str = include_str!("../../plantillas/iniciativa_interna.json");
+static INTERNA: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILLA_INTERNA_JSON).expect("plantilla interna inválida"));
+
+/// Comercial = lo que se le vende a un cliente (PROJECT, DEMO, PARTNERSHIP). Interno = lo que ArchitechIA hace para sí misma (PRODUCT, INTERN).
+/// Sale del campo `tipo` de la Solución: ese campo manda.
+pub(crate) fn naturaleza_de_tipo(tipo: &str) -> &'static str {
+    match tipo {
+        "PRODUCT" | "INTERN" => "INTERNO",
+        _ => "COMERCIAL",
+    }
+}
+
+fn plantilla_de_tipo(tipo: &str) -> &'static Value {
+    if naturaleza_de_tipo(tipo) == "INTERNO" { &INTERNA } else { &BASE }
+}
+
+/// Plantilla por el código que guarda cada proyecto al iniciarse (los proyectos viejos sin código usan la comercial).
+fn plantilla_por_codigo(codigo: &str) -> &'static Value {
+    if codigo == "INICIATIVA_INTERNA" { &INTERNA } else { &BASE }
+}
 
 // ── Plantilla (funciones puras) ─────────────────────────────────────────────────────────────
 pub(super) fn lista(def: &Value) -> &[Value] {
@@ -84,8 +104,8 @@ fn validar_plantilla(def: &Value) -> Result<(), String> {
             return Err(format!("la fase {clave} no tiene el número {}", i + 1));
         }
         match f["bloque"].as_str() {
-            Some("PREVENTA") if !en_ejecucion => {}
-            Some("PREVENTA") => return Err(format!("{clave}: preventa después de ejecución")),
+            Some("PREVENTA") | Some("DEFINICION") if !en_ejecucion => {}
+            Some("PREVENTA") | Some("DEFINICION") => return Err(format!("{clave}: una fase de preventa o definición después de la ejecución")),
             Some("EJECUCION") => en_ejecucion = true,
             _ => return Err(format!("{clave}: bloque inválido")),
         }
@@ -130,12 +150,17 @@ fn validar_plantilla(def: &Value) -> Result<(), String> {
             }
         }
     }
-    if resultados != 1 {
-        return Err("debe haber exactamente una puerta de tipo RESULTADO".into());
+    // La puerta de resultado (venta ganada o perdida) existe solo cuando hay preventa; las iniciativas internas no tienen venta.
+    let hay_preventa = fases.iter().any(|f| f["bloque"] == "PREVENTA");
+    let esperados = if hay_preventa { 1 } else { 0 };
+    if resultados != esperados {
+        return Err(format!("debe haber exactamente {esperados} puerta(s) de tipo RESULTADO"));
     }
-    let r = fases.iter().position(|f| f["puerta"]["tipo"] == "RESULTADO").unwrap_or(0);
-    if fases.get(r + 1).map(|f| f["bloque"] != "EJECUCION").unwrap_or(true) {
-        return Err("la puerta de resultado debe estar justo antes de la ejecución".into());
+    if hay_preventa {
+        let r = fases.iter().position(|f| f["puerta"]["tipo"] == "RESULTADO").unwrap_or(0);
+        if fases.get(r + 1).map(|f| f["bloque"] != "EJECUCION").unwrap_or(true) {
+            return Err("la puerta de resultado debe estar justo antes de la ejecución".into());
+        }
     }
     Ok(())
 }
@@ -296,7 +321,7 @@ fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
     let lead = ctx["leadId"].as_str();
     // Los proyectos iniciados antes de que existieran los recursos usan los de la plantilla vigente.
     let recursos = fase["recursos"].as_array().cloned().or_else(|| {
-        lista(&BASE).iter().find(|f| f["clave"] == fase["clave"]).and_then(|f| f["recursos"].as_array().cloned())
+        lista(plantilla_por_codigo(ctx["plantilla"].as_str().unwrap_or(""))).iter().find(|f| f["clave"] == fase["clave"]).and_then(|f| f["recursos"].as_array().cloned())
     }).unwrap_or_default();
     let hub = |seccion: &str| format!("/solutions/pilots/{sol}?seccion={seccion}");
     recursos
@@ -712,28 +737,38 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
     }
     .unwrap_or(Value::Null);
     let puede = se.is_admin() || se.is_service;
-    let ctx = contexto_recursos(&st, &id, sol["leadId"].as_str()).await?;
+    let mut ctx = contexto_recursos(&st, &id, sol["leadId"].as_str()).await?;
+    let tipo = sol["tipo"].as_str().unwrap_or("PROJECT").to_string();
+    let naturaleza = naturaleza_de_tipo(&tipo);
 
     let Some(est) = cargar(&st, &id).await? else {
-        let sugerida = match lead["status"].as_str() {
-            Some(ls) => match destino_de_lead(&BASE, ls, lead["outcome"].as_str()) {
-                Destino::Fase(c) => c,
-                Destino::Ganado | Destino::Ninguno | Destino::Perdido => FASE_ARRANQUE.to_string(),
-            },
-            None => FASE_ARRANQUE.to_string(),
+        let previo: &Value = plantilla_de_tipo(&tipo);
+        ctx["plantilla"] = previo["codigo"].clone();
+        let sugerida = if naturaleza == "INTERNO" {
+            clave_de(previo, 0)
+        } else {
+            match lead["status"].as_str() {
+                Some(ls) => match destino_de_lead(previo, ls, lead["outcome"].as_str()) {
+                    Destino::Fase(c) => c,
+                    Destino::Ganado | Destino::Ninguno | Destino::Perdido => FASE_ARRANQUE.to_string(),
+                },
+                None => FASE_ARRANQUE.to_string(),
+            }
         };
         // Vista previa: las 12 fases tal como serían, todas pendientes, para poder verlas antes de iniciar.
-        let mut previa = vista_fases(&BASE, &sugerida, "EN_CURSO", &criterios_vacios(&BASE), &[], &ctx);
+        let mut previa = vista_fases(previo, &sugerida, "EN_CURSO", &criterios_vacios(previo), &[], &ctx);
         for f in previa.iter_mut() {
             f["estado"] = json!("PENDIENTE");
         }
         return Ok(Json(json!({
             "iniciado": false, "solucion": sol, "lead": lead, "puedeAprobar": puede, "faseSugerida": sugerida, "fases": previa,
-            "plantilla": { "codigo": BASE["codigo"], "nombre": BASE["nombre"], "descripcion": BASE["descripcion"], "fases": lista(&BASE).len() },
+            "naturaleza": naturaleza,
+            "plantilla": { "codigo": previo["codigo"], "nombre": previo["nombre"], "descripcion": previo["descripcion"], "fases": lista(previo).len() },
         })));
     };
 
     let def = &est["definicion"];
+    ctx["plantilla"] = est["plantilla"].clone();
     let acts = match fetch_json(
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', fa.fase, 'clave', fa.clave, 'backlogItemId', fa."backlogItemId", 'taskCode', bi."taskCode",
@@ -756,7 +791,7 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
     let actual = est["faseActual"].as_str().unwrap_or_default();
     let estado = est["estado"].as_str().unwrap_or("EN_CURSO");
     Ok(Json(json!({
-        "iniciado": true, "solucion": sol, "lead": lead, "puedeAprobar": puede, "esSuperadmin": se.role == "SUPERADMIN",
+        "iniciado": true, "naturaleza": naturaleza, "solucion": sol, "lead": lead, "puedeAprobar": puede, "esSuperadmin": se.role == "SUPERADMIN",
         "plantilla": { "codigo": def["codigo"], "nombre": def["nombre"], "version": def["version"] },
         "estado": estado, "faseActual": actual,
         "fases": vista_fases(def, actual, estado, &est["criterios"], &acts, &ctx),
@@ -767,15 +802,16 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
 
 /// Inicia el motor de una Solución en la fase que corresponde al estado de su lead. Devuelve la fase.
 async fn iniciar_para(st: &AppState, id: &str, a: &Actor, elegida: Option<&str>) -> Result<String, ApiError> {
-    validar_plantilla(&BASE).map_err(|e| ApiError::internal(format!("Plantilla inválida: {e}")))?;
-    let def: &Value = &BASE;
-    let lead_id = lead_de(st, id).await?;
-    if fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE id = $1"#, &[B::T(id.to_string())]).await?.is_none() {
-        return Err(ApiError::not_found("Proyecto no encontrado"));
-    }
+    let tipo = fetch_text_opt(&st.pool, r#"SELECT tipo FROM "Solucion" WHERE id = $1"#, &[B::T(id.to_string())]).await?.ok_or_else(|| ApiError::not_found("Proyecto no encontrado"))?;
+    let def: &Value = plantilla_de_tipo(&tipo);
+    validar_plantilla(def).map_err(|e| ApiError::internal(format!("Plantilla inválida: {e}")))?;
+    let interno = naturaleza_de_tipo(&tipo) == "INTERNO";
+    // Lo interno no tiene lead ni venta: el ciclo arranca en su primera fase.
+    let lead_id = if interno { None } else { lead_de(st, id).await? };
     // Sin lead no hay preventa: el proyecto arranca en la fase de arranque.
     let mut estado_lead: Option<(String, Option<String>)> = None;
     let (mut fase, mut estado) = match &lead_id {
+        None if interno => (clave_de(def, 0), "EN_CURSO"),
         None => (FASE_ARRANQUE.to_string(), "EN_CURSO"),
         Some(l) => {
             let lead = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('status', status::text, 'outcome', outcome) FROM "Lead" WHERE id = $1"#, &[B::T(l.clone())])
@@ -835,6 +871,15 @@ async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>
     let a = exigir_puede(&se)?;
     let fase = iniciar_para(&st, &id, &a, s_no_vacio(&body, "fase").as_deref()).await?;
     Ok(Json(json!({ "ok": true, "faseActual": fase })))
+}
+
+/// Inicia el motor de una Solución interna (sin lead) en su primera fase. Lo usa «Nueva iniciativa».
+pub async fn iniciar_solucion(st: &AppState, sol: &str, a_id: &str, a_nombre: &str) -> Result<String, ApiError> {
+    if cargar(st, sol).await?.is_some() {
+        return Err(ApiError::bad_request("Este proyecto ya tiene el motor de fases iniciado"));
+    }
+    let a = Actor { id: (!a_id.is_empty()).then(|| a_id.to_string()), nombre: if a_nombre.is_empty() { "Sistema".into() } else { a_nombre.into() }, super_admin: false };
+    iniciar_para(st, sol, &a, None).await
 }
 
 /// Toda oportunidad tiene su Solución: si el lead no la tiene, se crea (el nombre se ajusta cuando se elige la solución asociada).
@@ -1010,6 +1055,43 @@ mod tests {
         assert_eq!(lista(&BASE).len(), 12);
         assert_eq!(lista(&BASE).iter().filter(|f| f["bloque"] == "PREVENTA").count(), 6);
         assert_eq!(indice(&BASE, FASE_ARRANQUE), Some(6));
+    }
+
+    #[test]
+    fn el_tipo_decide_la_naturaleza_y_la_plantilla() {
+        for (tipo, nat) in [("PROJECT", "COMERCIAL"), ("DEMO", "COMERCIAL"), ("PARTNERSHIP", "COMERCIAL"), ("PRODUCT", "INTERNO"), ("INTERN", "INTERNO"), ("RARO", "COMERCIAL")] {
+            assert_eq!(naturaleza_de_tipo(tipo), nat, "{tipo}");
+        }
+        assert_eq!(plantilla_de_tipo("PRODUCT")["codigo"], "INICIATIVA_INTERNA");
+        assert_eq!(plantilla_de_tipo("INTERN")["codigo"], "INICIATIVA_INTERNA");
+        assert_eq!(plantilla_de_tipo("PROJECT")["codigo"], "PROYECTO_COMPLETO");
+        assert_eq!(plantilla_por_codigo("INICIATIVA_INTERNA")["codigo"], "INICIATIVA_INTERNA");
+        assert_eq!(plantilla_por_codigo("")["codigo"], "PROYECTO_COMPLETO", "los proyectos viejos sin código usan la comercial");
+    }
+
+    #[test]
+    fn la_plantilla_interna_es_coherente_y_no_tiene_venta() {
+        validar_plantilla(&INTERNA).expect("plantilla interna");
+        let fases = lista(&INTERNA);
+        assert_eq!(fases.len(), 8);
+        assert!(fases.iter().all(|f| f["bloque"] != "PREVENTA" && f["leadStatus"].is_null()), "sin preventa ni estados de lead");
+        assert!(fases.iter().all(|f| f["puerta"]["tipo"] == "NORMAL"), "ninguna puerta decide una venta");
+        assert_eq!(fases[0]["clave"], "idea");
+        assert_eq!(fases[1]["puerta"]["aprobador"], "DIRECCION", "Dirección aprueba el caso de negocio");
+        assert_eq!(INTERNA["naturaleza"], "INTERNO");
+        assert_eq!(BASE["naturaleza"], "COMERCIAL");
+        // sus claves de construcción siguen siendo las que usa la vista «dónde está»
+        for c in ["diseno_plan", "construccion", "qa"] {
+            assert!(indice(&INTERNA, c).is_some(), "{c}");
+        }
+        // una interna con una puerta de resultado se rechaza
+        let mut p = INTERNA.clone();
+        p["fases"][1]["puerta"]["tipo"] = json!("RESULTADO");
+        assert!(validar_plantilla(&p).is_err());
+        // y una interna con estado de lead también
+        let mut p = INTERNA.clone();
+        p["fases"][0]["leadStatus"] = json!("NEW");
+        assert!(validar_plantilla(&p).is_err());
     }
 
     #[test]

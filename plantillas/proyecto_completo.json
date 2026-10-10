@@ -770,5 +770,11 @@
         }
       ]
     }
+  ],
+  "naturaleza": "COMERCIAL",
+  "aplicaA": [
+    "PROJECT",
+    "DEMO",
+    "PARTNERSHIP"
   ]
 }

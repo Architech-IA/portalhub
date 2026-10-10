@@ -1,0 +1,535 @@
+{
+  "codigo": "INICIATIVA_INTERNA",
+  "naturaleza": "INTERNO",
+  "aplicaA": [
+    "PRODUCT",
+    "INTERN"
+  ],
+  "nombre": "Iniciativa interna (producto o mejora propia)",
+  "descripcion": "Ciclo de vida de una iniciativa de ArchitechIA: idea y caso de negocio (con aprobación de Dirección y capacidad asignada), validación con un MVP, construcción, QA con el dueño, lanzamiento y medición del beneficio. No hay cliente ni venta.",
+  "version": 1,
+  "fases": [
+    {
+      "clave": "idea",
+      "numero": 1,
+      "bloque": "DEFINICION",
+      "nombre": "Idea y problema",
+      "leadStatus": null,
+      "objetivo": "Dejar por escrito el problema, a quién afecta, cómo se resuelve hoy y quién será el dueño de la iniciativa.",
+      "actividades": [
+        {
+          "clave": "planteamiento",
+          "titulo": "Redactar el planteamiento del problema y las alternativas (incluida «no hacer nada»)",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Qué problema es, a quién afecta y cuánto (con datos si existen), cómo se resuelve hoy y qué alternativas hay. Se guarda en el PRD de la Solución."
+        },
+        {
+          "clave": "dueno_usuarios",
+          "titulo": "Definir el dueño de la iniciativa y quiénes la van a usar",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Una persona responde por el resultado; los usuarios son quienes validan que sirve."
+        }
+      ],
+      "entregables": [
+        "Planteamiento del problema",
+        "Dueño y usuarios"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DUENO",
+        "criterios": [
+          "El problema está descrito con datos (a quién afecta y cuánto)",
+          "Hay un dueño de la iniciativa",
+          "Se listaron las alternativas, incluida «no hacer nada»"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_PRD",
+          "etiqueta": "Planteamiento (PRD)",
+          "descripcion": "Problema, usuarios y alcance de la iniciativa."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Adjuntos de la iniciativa",
+          "descripcion": "Datos, correos o documentos que sustentan el problema."
+        }
+      ]
+    },
+    {
+      "clave": "caso_negocio",
+      "numero": 2,
+      "bloque": "DEFINICION",
+      "nombre": "Caso de negocio y prioridad",
+      "leadStatus": null,
+      "objetivo": "Decidir si vale la pena: beneficio esperado, costo, prioridad frente a lo demás y capacidad asignada.",
+      "actividades": [
+        {
+          "clave": "estimacion",
+          "titulo": "Estimar esfuerzo, costo y riesgos",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Esfuerzo en tareas de agente y en horas de personas, costo estimado en tokens y riesgos principales."
+        },
+        {
+          "clave": "beneficio",
+          "titulo": "Cuantificar el beneficio esperado y definir la métrica de éxito",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Ahorro, ingreso o riesgo evitado, en números, y cómo se va a medir después del lanzamiento."
+        },
+        {
+          "clave": "priorizacion",
+          "titulo": "Priorizar frente a las demás iniciativas y asignar capacidad",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "La capacidad de agentes y personas es compartida con los proyectos de clientes: se decide cuánta se le da y desde cuándo."
+        }
+      ],
+      "entregables": [
+        "Caso de negocio con beneficio y costo",
+        "Métrica de éxito",
+        "Prioridad y capacidad asignada"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DIRECCION",
+        "criterios": [
+          "El beneficio esperado está cuantificado y tiene una métrica de éxito",
+          "El esfuerzo y el costo están estimados",
+          "Dirección aprobó la iniciativa y le asignó capacidad (agentes y personas)"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_PLAN",
+          "etiqueta": "Plan de la iniciativa",
+          "descripcion": "Capacidad, responsables y calendario."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Caso de negocio",
+          "descripcion": "Súbelo como adjunto del proyecto."
+        }
+      ]
+    },
+    {
+      "clave": "validacion",
+      "numero": 3,
+      "bloque": "EJECUCION",
+      "nombre": "Validación / MVP",
+      "leadStatus": null,
+      "objetivo": "Probar con usuarios internos la versión más pequeña que demuestre el valor, antes de invertir en la completa.",
+      "actividades": [
+        {
+          "clave": "esbozo_arquitectura",
+          "titulo": "Esbozar la arquitectura y el modelo de datos del MVP",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Antes de construir: diagrama de componentes en la pestaña Arquitectura y entidades en Diseño técnico. Es la referencia que los agentes respetan al construir."
+        },
+        {
+          "clave": "construir_mvp",
+          "titulo": "Construir el MVP",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "FEATURE",
+          "prioridad": "HIGH",
+          "descripcion": "Crear el repositorio de la Solución, escribir un PRD corto y un sprint «MVP» y ejecutarlo con el Motor. Construirlo para que se quede: es la base del producto."
+        },
+        {
+          "clave": "validar_usuarios",
+          "titulo": "Probar el MVP con los usuarios internos y registrar lo aprendido",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Qué funcionó, qué no, y si la métrica de éxito parece alcanzable."
+        }
+      ],
+      "entregables": [
+        "Esbozo de arquitectura y modelo de datos",
+        "MVP funcionando",
+        "Conclusiones de la validación"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "LIDER_TECNICO",
+        "criterios": [
+          "Existe un esbozo de arquitectura y modelo de datos del MVP",
+          "El MVP funciona con datos de ejemplo",
+          "Los usuarios internos lo probaron y hay conclusiones por escrito",
+          "Se decidió seguir, ajustar o detener la iniciativa"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_ARQUITECTURA",
+          "etiqueta": "Diagrama de arquitectura",
+          "descripcion": "Componentes y conexiones del MVP."
+        },
+        {
+          "tipo": "HUB_DISENO",
+          "etiqueta": "Modelo de datos del MVP",
+          "descripcion": "Entidades, atributos y relaciones: los agentes lo respetan."
+        },
+        {
+          "tipo": "HUB_CODIGO",
+          "etiqueta": "Repositorio del MVP",
+          "descripcion": "Código de la iniciativa."
+        },
+        {
+          "tipo": "HUB_DESPLIEGUE",
+          "etiqueta": "MVP desplegado",
+          "descripcion": "Solo con datos de ejemplo."
+        },
+        {
+          "tipo": "SALA_CONTROL",
+          "etiqueta": "Sprint del MVP",
+          "descripcion": "Ejecución de las tareas del MVP con el Motor."
+        }
+      ]
+    },
+    {
+      "clave": "diseno_plan",
+      "numero": 4,
+      "bloque": "EJECUCION",
+      "nombre": "Diseño y plan",
+      "leadStatus": null,
+      "objetivo": "Definir cómo se construye: diseño técnico, plan de ejecución y backlog.",
+      "actividades": [
+        {
+          "clave": "diseno_tecnico",
+          "titulo": "Elaborar el diseño técnico y la arquitectura",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Diseño técnico en la Solución (arquitectura, componentes, datos, integraciones y decisiones)."
+        },
+        {
+          "clave": "plan_ejecucion",
+          "titulo": "Elaborar el plan de ejecución: estimación, riesgos, responsables y cronograma",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Plan de ejecución en la Solución: QA, ambientes y despliegue, responsables, gestión de cambios y comunicación."
+        },
+        {
+          "clave": "backlog",
+          "titulo": "Generar épicas, sprints y tareas a partir del PRD y el diseño",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD."
+        }
+      ],
+      "entregables": [
+        "Diseño técnico",
+        "Plan de ejecución",
+        "Backlog con épicas y sprints"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "LIDER_TECNICO",
+        "criterios": [
+          "El diseño técnico está aprobado",
+          "El plan de ejecución está aprobado",
+          "El backlog está creado y priorizado",
+          "El diagrama de arquitectura y el modelo de datos están completos"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_ARQUITECTURA",
+          "etiqueta": "Diagrama de arquitectura",
+          "descripcion": "Componentes y conexiones del proyecto."
+        },
+        {
+          "tipo": "HUB_DISENO",
+          "etiqueta": "Diseño técnico",
+          "descripcion": "Arquitectura, componentes, datos e integraciones."
+        },
+        {
+          "tipo": "HUB_PLAN",
+          "etiqueta": "Plan de ejecución",
+          "descripcion": "QA, ambientes, responsables, cambios y comunicación."
+        },
+        {
+          "tipo": "BACKLOG",
+          "etiqueta": "Backlog del proyecto",
+          "descripcion": "Requisitos del PRD convertidos en tareas."
+        }
+      ]
+    },
+    {
+      "clave": "construccion",
+      "numero": 5,
+      "bloque": "EJECUCION",
+      "nombre": "Construcción",
+      "leadStatus": null,
+      "objetivo": "Construir el producto en sprints, con revisión por sprint.",
+      "actividades": [
+        {
+          "clave": "sprint_endurecimiento",
+          "titulo": "Sprint de endurecimiento: pruebas, seguridad y refactor antes de sumar funciones",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "IMPROVEMENT",
+          "prioridad": "HIGH",
+          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto."
+        },
+        {
+          "clave": "sprints",
+          "titulo": "Ejecutar los sprints del backlog con revisión por sprint",
+          "tipo": "HUMANA",
+          "area": "Development",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Los sprints y sus tareas se gestionan en Backlog y en la Sala de Control. Esta actividad se cierra cuando se completan."
+        },
+        {
+          "clave": "actualizar_diseno",
+          "titulo": "Actualizar el diseño técnico y el diagrama con lo realmente construido",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas."
+        }
+      ],
+      "entregables": [
+        "Producto construido y revisado por sprint",
+        "Registro de solicitudes de cambio",
+        "Diseño técnico y diagrama al día con lo construido"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "LIDER_TECNICO",
+        "criterios": [
+          "Todos los sprints previstos están cerrados",
+          "Las solicitudes de cambio están resueltas",
+          "El código está integrado en la rama principal",
+          "El diseño técnico y el diagrama reflejan lo que se construyó"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "SALA_CONTROL",
+          "etiqueta": "Sala de Control",
+          "descripcion": "Dispara y sigue las tareas de los sprints."
+        },
+        {
+          "tipo": "BACKLOG",
+          "etiqueta": "Backlog del proyecto",
+          "descripcion": "Épicas, sprints y tareas."
+        },
+        {
+          "tipo": "HUB_CODIGO",
+          "etiqueta": "Código fuente",
+          "descripcion": "Repositorio del proyecto."
+        },
+        {
+          "tipo": "HUB_DISENO",
+          "etiqueta": "Diseño técnico",
+          "descripcion": "Debe coincidir con el esquema y el código."
+        }
+      ]
+    },
+    {
+      "clave": "qa",
+      "numero": 6,
+      "bloque": "EJECUCION",
+      "nombre": "QA y aceptación",
+      "leadStatus": null,
+      "objetivo": "Comprobar que funciona y que el cliente lo acepta.",
+      "actividades": [
+        {
+          "clave": "plan_pruebas",
+          "titulo": "Elaborar y ejecutar el plan de pruebas",
+          "tipo": "AGENTE",
+          "area": "Quality & Testing",
+          "backlogType": "TEST_QA",
+          "prioridad": "HIGH",
+          "descripcion": "Pruebas funcionales y de regresión; informe con los hallazgos."
+        },
+        {
+          "clave": "uat",
+          "titulo": "Realizar la aceptación con el dueño y los usuarios, y corregir los hallazgos",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "El dueño y los usuarios prueban y aceptan. Los hallazgos se corrigen antes del lanzamiento."
+        }
+      ],
+      "entregables": [
+        "Informe de pruebas",
+        "Aceptación del dueño"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DUENO",
+        "criterios": [
+          "Las pruebas críticas pasan",
+          "El dueño de la iniciativa aceptó el resultado",
+          "No quedan defectos críticos abiertos"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "BACKLOG",
+          "etiqueta": "Tareas de pruebas",
+          "descripcion": "Plan de pruebas y corrección de hallazgos."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Informe de pruebas y acta de aceptación",
+          "descripcion": "Súbelos como adjuntos del proyecto."
+        }
+      ]
+    },
+    {
+      "clave": "lanzamiento",
+      "numero": 7,
+      "bloque": "EJECUCION",
+      "nombre": "Lanzamiento y adopción",
+      "leadStatus": null,
+      "objetivo": "Poner la solución en producción y lograr que la gente la use.",
+      "actividades": [
+        {
+          "clave": "entorno_produccion",
+          "titulo": "Preparar el entorno de producción y cargar los datos reales",
+          "tipo": "AGENTE",
+          "area": "Infrastructure & DevOps",
+          "backlogType": "INFRAESTRUCTURA",
+          "prioridad": "HIGH",
+          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios."
+        },
+        {
+          "clave": "salida_produccion",
+          "titulo": "Desplegar a producción y verificar el monitoreo",
+          "tipo": "AGENTE",
+          "area": "Infrastructure & DevOps",
+          "backlogType": "INFRAESTRUCTURA",
+          "prioridad": "HIGH",
+          "descripcion": "Despliegue, verificación posterior, monitoreo y plan de vuelta atrás probado."
+        },
+        {
+          "clave": "comunicacion_usuarios",
+          "titulo": "Avisar y capacitar a los usuarios",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Anuncio, guía corta y una sesión de preguntas para quienes la van a usar."
+        }
+      ],
+      "entregables": [
+        "Producción funcionando",
+        "Monitoreo y plan de vuelta atrás",
+        "Usuarios avisados y capacitados"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DUENO",
+        "criterios": [
+          "El sistema funciona en producción",
+          "Los usuarios fueron avisados y capacitados",
+          "Existe un plan de vuelta atrás probado"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_DESPLIEGUE",
+          "etiqueta": "Producción",
+          "descripcion": "Entorno, base de datos y estado del despliegue."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Guía y comunicación a los usuarios",
+          "descripcion": "Súbelas como adjuntos del proyecto."
+        }
+      ]
+    },
+    {
+      "clave": "operacion_cierre",
+      "numero": 8,
+      "bloque": "EJECUCION",
+      "nombre": "Operación y medición",
+      "leadStatus": null,
+      "objetivo": "Pasar a operación con un responsable y comprobar si la iniciativa dio el beneficio prometido.",
+      "actividades": [
+        {
+          "clave": "traspaso_operacion",
+          "titulo": "Traspasar a operación: responsable, soporte y respaldos",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Quién la mantiene, cómo se pide soporte y cuándo se hacen respaldos."
+        },
+        {
+          "clave": "medir_exito",
+          "titulo": "Medir la métrica de éxito (a los 30 días) y compararla con el beneficio esperado",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Lo que dijo el caso de negocio contra lo que pasó realmente."
+        },
+        {
+          "clave": "lecciones",
+          "titulo": "Registrar las lecciones aprendidas, los costos y los tiempos reales",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Comparar lo estimado con lo real (tiempo y tokens) para mejorar las próximas iniciativas."
+        }
+      ],
+      "entregables": [
+        "Traspaso a operación",
+        "Medición contra el beneficio esperado",
+        "Lecciones aprendidas"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DIRECCION",
+        "criterios": [
+          "Hay un responsable de la operación y de los respaldos",
+          "Se midió la métrica de éxito contra lo esperado",
+          "Se registraron las lecciones aprendidas"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Medición y lecciones",
+          "descripcion": "Súbelas como adjuntos del proyecto."
+        },
+        {
+          "tipo": "HUB_CODIGO",
+          "etiqueta": "Repositorio",
+          "descripcion": "Código de la solución en operación."
+        }
+      ]
+    }
+  ]
+}

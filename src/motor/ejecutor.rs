@@ -370,6 +370,15 @@ fn presupuesto_de_rondas() -> String {
     )
 }
 
+/// Prioridad en la cola del Harness: lo que se le vende a un cliente (compromisos y fechas) va antes que lo interno. La cola ya atiende
+/// HIGH, luego MEDIUM y luego LOW; lo interno queda en MEDIUM para que nunca se quede sin turno.
+pub(crate) fn prioridad_por_tipo(tipo: &str) -> &'static str {
+    match tipo {
+        "PRODUCT" | "INTERN" => "MEDIUM",
+        _ => "HIGH",
+    }
+}
+
 /// ¿La ejecución agotó las rondas? El worker lo avisa en el resumen y además el número de llamadas al modelo llega al tope.
 fn agoto_rondas(resumen: &str, uso: Option<&Value>) -> bool {
     resumen.contains("se alcanzo el limite de pasos de herramientas")
@@ -532,12 +541,16 @@ pub async fn despachar(st: &AppState, tarea: &str, guia_extra: Option<&str>) -> 
     }
 
     let agente_slug = so(&perfil, "slug").filter(|x| !x.is_empty()).unwrap_or_else(|| agente.nombre.to_lowercase());
+    let prioridad_cola = match so(&t, "solucionId") {
+        Some(sid) => fetch_text_opt(&st.pool, r#"SELECT tipo FROM "Solucion" WHERE id = $1"#, &[B::T(sid)]).await.ok().flatten().map(|tp| prioridad_por_tipo(&tp)).unwrap_or("MEDIUM"),
+        None => "MEDIUM",
+    };
     let envio = st
         .http
         .post(format!("{}/dispatch", url_harness()))
         .timeout(std::time::Duration::from_secs(10))
         .json(&json!({
-            "type": "masd_task", "agent": agente_slug, "priority": "MEDIUM",
+            "type": "masd_task", "agent": agente_slug, "priority": prioridad_cola,
             "payload": { "taskId": tarea, "execId": exec_id, "strategy": agente.estrategia, "apiUrl": api_url, "modelId": modelo, "systemPrompt": system, "userPrompt": usuario,
                          "contextPreview": cortar(&contexto, 4000), "repoPath": repo_path }
         }))
@@ -1090,6 +1103,15 @@ mod pruebas_rondas {
         assert!(agoto_rondas("terminé", Some(&json!({ "calls": 20 }))));
         assert!(!agoto_rondas("terminé", Some(&json!({ "calls": 7 }))));
         assert!(!agoto_rondas("terminé", None));
+    }
+
+    #[test]
+    fn lo_comercial_va_primero_en_la_cola() {
+        assert_eq!(prioridad_por_tipo("PROJECT"), "HIGH");
+        assert_eq!(prioridad_por_tipo("DEMO"), "HIGH");
+        assert_eq!(prioridad_por_tipo("PARTNERSHIP"), "HIGH");
+        assert_eq!(prioridad_por_tipo("PRODUCT"), "MEDIUM");
+        assert_eq!(prioridad_por_tipo("INTERN"), "MEDIUM");
     }
 
     #[test]
