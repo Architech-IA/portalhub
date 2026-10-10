@@ -247,6 +247,16 @@ pub async fn resolver_repo(st: &AppState, solucion_id: Option<&str>) -> R<PathBu
 pub fn rama_sprint(codigo: &str) -> String {
     format!("masd/sprint-{codigo}")
 }
+/// Rama donde queda el trabajo de una tarea que no terminó (para continuarlo en el siguiente intento en vez de empezar de cero).
+pub fn rama_parcial(codigo: &str) -> String {
+    format!("masd/parcial/{codigo}")
+}
+
+/// Código de trabajo de una actividad de fase (no tiene taskCode ni sprint): solo sirve para nombrar su worktree de lectura.
+pub fn codigo_actividad(tarea_id: &str) -> String {
+    format!("act-{}", tarea_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>())
+}
+
 pub fn rama_tarea(codigo: &str) -> String {
     format!("masd/{codigo}")
 }
@@ -263,7 +273,7 @@ pub enum ErrorMerge {
     Otro(String),
 }
 
-async fn rama_existe(rama: &str, raiz: &Path) -> bool {
+pub(super) async fn rama_existe(rama: &str, raiz: &Path) -> bool {
     git(&["rev-parse", "--verify", rama], raiz).await.is_ok()
 }
 
@@ -302,6 +312,29 @@ pub async fn crear_worktree_tarea(codigo: &str, base: &str, raiz: &Path) -> R<(S
         let _ = std::os::unix::fs::symlink(&real, &enlace);
     }
     Ok((rama, wt))
+}
+
+/// Una tarea que NO terminó (falló o se quedó sin rondas): sus cambios sin integrar se commitean en `masd/parcial/<código>` y se
+/// quita el worktree. Así el trabajo no se pierde: el siguiente intento parte de esa rama. Devuelve (rama, archivos cambiados), o None si no había cambios.
+pub async fn guardar_parcial(codigo: &str, wt_tarea: &Path, raiz: &Path) -> R<Option<(String, usize)>> {
+    let estado = git(&["status", "--porcelain"], wt_tarea).await?;
+    let archivos = estado.lines().filter(|l| !l.trim().is_empty()).count();
+    if archivos == 0 {
+        return Ok(None);
+    }
+    git(&["add", "-A"], wt_tarea).await?;
+    let mut a: Vec<&str> = IDENTIDAD_GIT.to_vec();
+    let msg = format!("{codigo}: trabajo parcial (la tarea no terminó)");
+    a.extend(["commit", "-m", &msg]);
+    git(&a, wt_tarea).await?;
+    let _ = git(&["worktree", "remove", &wt_tarea.to_string_lossy(), "--force"], raiz).await;
+    let parcial = rama_parcial(codigo);
+    git(&["branch", "-M", &rama_tarea(codigo), &parcial], raiz).await?;
+    Ok(Some((parcial, archivos)))
+}
+
+pub async fn borrar_rama(rama: &str, raiz: &Path) {
+    let _ = git(&["branch", "-D", rama], raiz).await;
 }
 
 /// Al cerrar una tarea CODE en DONE: commitea su worktree y lo mergea a la rama de integración del sprint.
@@ -449,6 +482,26 @@ mod pruebas {
         let (_, w5) = crear_worktree_tarea("T-0001-005", &rama, &repo).await.unwrap();
         descartar_worktree(&w5, &repo).await;
         assert!(!w5.exists());
+
+        // Tarea que no termina: su trabajo parcial se conserva en una rama y el siguiente intento parte de ahí
+        let (_, w6) = crear_worktree_tarea("T-0001-006", &rama, &repo).await.unwrap();
+        std::fs::write(w6.join("c.txt"), "a medias
+").unwrap();
+        let (parcial, n) = guardar_parcial("T-0001-006", &w6, &repo).await.unwrap().expect("había cambios");
+        assert_eq!((parcial.as_str(), n), ("masd/parcial/T-0001-006", 1));
+        assert!(!w6.exists(), "el worktree se quita");
+        assert!(rama_existe(&parcial, &repo).await && !rama_existe("masd/T-0001-006", &repo).await);
+        let (_, w6b) = crear_worktree_tarea("T-0001-006", &parcial, &repo).await.unwrap();
+        assert_eq!(std::fs::read_to_string(w6b.join("c.txt")).unwrap().replace("
+", "
+"), "a medias
+", "el nuevo intento ve el trabajo parcial");
+        // sin cambios no hay nada que conservar
+        let (_, w7) = crear_worktree_tarea("T-0001-007", &rama, &repo).await.unwrap();
+        assert!(guardar_parcial("T-0001-007", &w7, &repo).await.unwrap().is_none());
+        borrar_rama(&parcial, &repo).await;
+        assert!(!rama_existe(&parcial, &repo).await);
+        assert_eq!(codigo_actividad("cmv1m8w0cc6elnlo642q62xie"), "act-cmv1m8w0");
         let _ = std::fs::remove_dir_all(&base);
     }
 

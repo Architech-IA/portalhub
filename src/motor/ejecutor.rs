@@ -361,11 +361,27 @@ fn extraer_decisiones(resumen: &str) -> Vec<String> {
 }
 
 // ── Despacho ─────────────────────────────────────────────────────────────────────────────────
+/// Rondas de herramientas que tiene un agente de código por tarea (el tope lo aplica el worker).
+const RONDAS_AGENTE: i64 = 20;
+
+fn presupuesto_de_rondas() -> String {
+    format!(
+        "PRESUPUESTO: tienes como máximo {RONDAS_AGENTE} rondas de herramientas; si se acaban sin terminar, el trabajo queda a medias. Planifica así: (1) lee solo lo imprescindible (máximo 5 rondas; usa grep_files y rangos de líneas, no archivos completos); (2) escribe cuanto antes; (3) deja tsc y las pruebas para las últimas rondas. Si ves que no vas a alcanzar, deja el proyecto compilando con lo que lleves y empieza tu resumen con «PARCIAL:» indicando exactamente qué falta."
+    )
+}
+
+/// ¿La ejecución agotó las rondas? El worker lo avisa en el resumen y además el número de llamadas al modelo llega al tope.
+fn agoto_rondas(resumen: &str, uso: Option<&Value>) -> bool {
+    resumen.contains("se alcanzo el limite de pasos de herramientas")
+        || resumen.contains("se alcanzó el límite de pasos de herramientas")
+        || uso.and_then(|u| u["calls"].as_i64()).map(|n| n >= RONDAS_AGENTE).unwrap_or(false)
+}
+
 pub async fn despachar(st: &AppState, tarea: &str, guia_extra: Option<&str>) -> R<Value> {
     let t = fetch_json_opt(
         &st.pool,
         r#"SELECT to_jsonb(x) FROM (SELECT bi.id, bi.title, bi.description, bi."taskCode", bi."areaId", bi."sprintId", bi.type, bi."assigneeId", bi."assigneeName", bi.status,
-                  bi."dependsOnTaskId", bi."solucionId", bi."prdRequisitoId", s."sprintCode", dep."taskCode" AS "dependsOnTaskCode", dep.status AS "dependsOnStatus"
+                  bi."dependsOnTaskId", bi."solucionId", bi."prdRequisitoId", bi.resultado, s."sprintCode", dep."taskCode" AS "dependsOnTaskCode", dep.status AS "dependsOnStatus"
              FROM "BacklogItem" bi LEFT JOIN "Sprint" s ON bi."sprintId" = s.id LEFT JOIN "BacklogItem" dep ON bi."dependsOnTaskId" = dep.id WHERE bi.id = $1) x"#,
         &[B::T(tarea.into())],
     )
@@ -439,12 +455,41 @@ pub async fn despachar(st: &AppState, tarea: &str, guia_extra: Option<&str>) -> 
         .join("\n"),
         None => String::new(),
     });
-    let usuario = partes.join("\n\n");
+    let mut usuario = partes.join("\n\n");
     let (api_url, modelo) = resolver_modelo(st, so(&perfil, "llmModel").as_deref());
 
     // Tareas CODE dentro de un sprint: worktree aislado ramificado de la rama de integración del sprint.
     let mut repo_path: Option<String> = None;
     if agente.estrategia == "CODE" {
+        // Presupuesto de rondas explícito, al final del prompt: las tareas que exploran sin escribir se quedan sin rondas y pierden todo.
+        usuario.push_str(&format!("\n\n---\n{}", presupuesto_de_rondas()));
+        if so(&t, "sprintCode").filter(|x| !x.is_empty()).is_none() {
+            // Actividad de fase (sin sprint): ve el repositorio de la Solución, en solo lectura (main), si la Solución tiene uno propio.
+            let sol = so(&t, "solucionId");
+            let tiene_repo = match &sol {
+                Some(s) => fetch_text_opt(&st.pool, r#"SELECT NULLIF(btrim(repositorio), '') FROM "Solucion" WHERE id = $1"#, &[B::T(s.clone())]).await.map_err(err_db)?.map(|r| r != "portal-architechia").unwrap_or(false),
+                None => false,
+            };
+            if tiene_repo {
+                let r: R<String> = async {
+                    let raiz = repo::resolver_repo(st, sol.as_deref()).await?;
+                    let _ = repo::git_con_credenciales(st, &["fetch", "origin", "main"], &raiz).await;
+                    let base = if repo::rama_existe("origin/main", &raiz).await { "origin/main" } else { "main" };
+                    let codigo = repo::codigo_actividad(tarea);
+                    let (_, wt) = repo::crear_worktree_tarea(&codigo, base, &raiz).await?;
+                    emitir_traza(st, tarea, Some(&exec_id), "info", &format!("repositorio de la Solución disponible en solo lectura ({base})")).await;
+                    Ok(wt.to_string_lossy().to_string())
+                }
+                .await;
+                match r {
+                    Ok(p) => {
+                        repo_path = Some(p);
+                        usuario.push_str("\n\n---\nREPOSITORIO DE LA SOLUCIÓN (SOLO LECTURA): esta actividad es de análisis o documentación. Tienes el código del proyecto en tu directorio de trabajo para consultarlo (list_files, grep_files, read_file). NO escribas ni modifiques archivos del repositorio: cualquier cambio se descarta al terminar. Entrega el resultado completo en tu resumen final.");
+                    }
+                    Err(e) => emitir_traza(st, tarea, Some(&exec_id), "info", &format!("no se pudo preparar el repositorio de solo lectura: {e}")).await,
+                }
+            }
+        }
         if let Some(codigo_sprint) = so(&t, "sprintCode").filter(|x| !x.is_empty()) {
             let r: R<String> = async {
                 let raiz = repo::resolver_repo(st, so(&t, "solucionId").as_deref()).await?;
@@ -456,8 +501,21 @@ pub async fn despachar(st: &AppState, tarea: &str, guia_extra: Option<&str>) -> 
                     }
                 }
                 let codigo = sg(&t, "taskCode");
+                // Un intento anterior que no terminó dejó su trabajo en la rama parcial: se continúa desde ahí.
+                let parcial = repo::rama_parcial(&codigo);
+                let continuando = repo::rama_existe(&parcial, &raiz).await;
+                if continuando {
+                    base = parcial.clone();
+                }
                 let (_, wt) = repo::crear_worktree_tarea(&codigo, &base, &raiz).await?;
                 emitir_traza(st, tarea, Some(&exec_id), "info", &format!("worktree creado — rama {} desde {base}", repo::rama_tarea(&codigo))).await;
+                if continuando {
+                    emitir_traza(st, tarea, Some(&exec_id), "info", "continúa el trabajo parcial de un intento anterior (ya está en el worktree)").await;
+                    usuario.push_str(&format!(
+                        "\n\n---\nCONTINUACIÓN: un intento anterior de esta tarea NO terminó, pero su trabajo parcial YA está en tu rama (míralo con `git status` y `git diff main --stat` o con list_files; no empieces de cero). Revisa qué falta, corrige lo que esté mal y termina.\nResultado del intento anterior:\n{}",
+                        cortar(&so(&t, "resultado").unwrap_or_default(), 1500)
+                    ));
+                }
                 Ok(wt.to_string_lossy().to_string())
             }
             .await;
@@ -663,7 +721,10 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
     let Some(t) = t else { return Err(format!("Task {tarea} not found")) };
     let raiz_tarea = repo::resolver_repo(st, so(&t, "solucionId").as_deref()).await?;
     let codigo = so(&t, "taskCode").filter(|x| !x.is_empty());
-    let wt_tarea = codigo.as_deref().map(repo::worktree_tarea);
+    // Actividad de fase (sin taskCode ni sprint): si recibió el repositorio en solo lectura, su worktree se llama act-<id>.
+    let cod_actividad = repo::codigo_actividad(tarea);
+    let es_actividad = codigo.is_none() && repo::worktree_tarea(&cod_actividad).exists();
+    let wt_tarea = codigo.as_deref().map(repo::worktree_tarea).or_else(|| es_actividad.then(|| repo::worktree_tarea(&cod_actividad)));
     let uso_worktree = wt_tarea.as_ref().map(|p| p.exists()).unwrap_or(false);
     let raiz_chequeo: PathBuf = match (&wt_tarea, uso_worktree) {
         (Some(p), true) => p.clone(),
@@ -681,7 +742,8 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
     let mut verificado = c.estado_final.clone();
     let mut checklist: Vec<Value> = vec![];
     if c.estado_final == "DONE" {
-        let chequeo = chequeo_real(&c.tool_log, &raiz_chequeo).await;
+        // Las actividades de fase no escriben código: no se compila nada (el repositorio está en solo lectura).
+        let chequeo = if es_actividad { ResultadoCodigo { corrio: false, paso: true, errores: vec![] } } else { chequeo_real(&c.tool_log, &raiz_chequeo).await };
         if chequeo.corrio {
             emitir_traza(
                 st,
@@ -762,7 +824,12 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
         if verificado == "DONE" {
             let wt_sprint = repo::worktree_sprint(&codigo_sprint);
             match repo::commit_y_merge(cod, wt, &repo::rama_tarea(cod), &wt_sprint, &raiz_tarea).await {
-                Ok(_) => emitir_traza(st, tarea, Some(exec_id), "info", "merge a la rama de integración del sprint — sin conflictos").await,
+                Ok(_) => {
+                    emitir_traza(st, tarea, Some(exec_id), "info", "merge a la rama de integración del sprint — sin conflictos").await;
+                    if repo::rama_existe(&repo::rama_parcial(cod), &raiz_tarea).await {
+                        repo::borrar_rama(&repo::rama_parcial(cod), &raiz_tarea).await;
+                    }
+                }
                 Err(ErrorMerge::Conflicto { rama, archivos }) => {
                     verificado = "BLOCKED".into();
                     let lista = if archivos.is_empty() { "(sin detalle)".to_string() } else { archivos.join(", ") };
@@ -783,9 +850,33 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                 }
             }
         } else {
-            repo::descartar_worktree(wt, &raiz_tarea).await;
-            emitir_traza(st, tarea, Some(exec_id), "info", "worktree descartado — no se mergeó nada").await;
+            // La tarea no terminó: sus cambios no se pierden, quedan en una rama parcial desde la que continuará el siguiente intento.
+            match repo::guardar_parcial(cod, wt, &raiz_tarea).await {
+                Ok(Some((rama, n))) => {
+                    let agoto = agoto_rondas(&c.resumen, c.uso.as_ref());
+                    emitir_traza(st, tarea, Some(exec_id), "info", &format!("trabajo parcial conservado en la rama {rama} ({n} archivo(s)){}", if agoto { " — la tarea agotó sus rondas de herramientas" } else { "" })).await;
+                    resultado_final = [
+                        c.resumen.clone(),
+                        String::new(),
+                        format!("⚠️ TRABAJO PARCIAL CONSERVADO en la rama {rama} ({n} archivo(s) sin integrar). Al volver a ejecutar esta tarea el agente continúa desde ahí."),
+                        if agoto { "La tarea agotó sus rondas de herramientas: es demasiado grande para un solo intento. Conviene dividirla en tareas más chicas (cada una con pocos archivos) o relanzarla para que continúe.".to_string() } else { String::new() },
+                    ]
+                    .join("\n");
+                }
+                Ok(None) => {
+                    repo::descartar_worktree(wt, &raiz_tarea).await;
+                    emitir_traza(st, tarea, Some(exec_id), "info", "worktree descartado — la tarea no dejó cambios").await;
+                }
+                Err(e) => {
+                    tracing::error!("[GIT] No se pudo guardar el trabajo parcial de {cod}: {e}");
+                    repo::descartar_worktree(wt, &raiz_tarea).await;
+                    emitir_traza(st, tarea, Some(exec_id), "info", "worktree descartado — no se pudo guardar el trabajo parcial").await;
+                }
+            }
         }
+    } else if let (true, Some(wt)) = (es_actividad && so(&t, "sprintCode").filter(|x| !x.is_empty()).is_none(), wt_tarea.as_ref()) {
+        repo::descartar_worktree(wt, &raiz_tarea).await;
+        emitir_traza(st, tarea, Some(exec_id), "info", "repositorio de solo lectura liberado").await;
     }
 
     emitir_traza(st, tarea, Some(exec_id), if verificado == "DONE" { "check" } else { "fail" }, &format!("estado final: {verificado}")).await;
@@ -804,7 +895,7 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
     }
 
     if verificado == "FAILED" || verificado == "BLOCKED" {
-        let limite = c.resumen.contains("se alcanzo el limite de pasos de herramientas") || c.resumen.contains("se alcanzó el límite de pasos de herramientas");
+        let limite = agoto_rondas(&c.resumen, c.uso.as_ref());
         let titulo = sg(&t, "title");
         let codigo_o_id = codigo.clone().unwrap_or_else(|| tarea.to_string());
         let r = exec(
@@ -985,4 +1076,25 @@ async fn resumir_sprint(st: &AppState, sprint_id: &str) -> R<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod pruebas_rondas {
+    use super::*;
+
+    #[test]
+    fn detecta_cuando_la_tarea_agoto_sus_rondas() {
+        assert!(agoto_rondas("... se alcanzo el limite de pasos de herramientas ...", None));
+        assert!(agoto_rondas("... se alcanzó el límite de pasos de herramientas ...", None));
+        assert!(agoto_rondas("terminé", Some(&json!({ "calls": 21 }))));
+        assert!(agoto_rondas("terminé", Some(&json!({ "calls": 20 }))));
+        assert!(!agoto_rondas("terminé", Some(&json!({ "calls": 7 }))));
+        assert!(!agoto_rondas("terminé", None));
+    }
+
+    #[test]
+    fn el_presupuesto_dice_las_rondas_y_como_avisar() {
+        let p = presupuesto_de_rondas();
+        assert!(p.contains("20 rondas") && p.contains("PARCIAL:") && p.contains("escribe cuanto antes"));
+    }
 }
