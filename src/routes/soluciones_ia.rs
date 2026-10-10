@@ -62,7 +62,7 @@ fn entidades(t: String) -> String {
 }
 
 /// `stripHtml` de prd-generate / prd-seccion-chat.
-fn strip_html(html: &str) -> String {
+pub(crate) fn strip_html(html: &str) -> String {
     let t = R_BR.replace_all(html, "\n").to_string();
     let t = R_P.replace_all(&t, "\n").to_string();
     let t = R_LI_FIN.replace_all(&t, "\n").to_string();
@@ -87,7 +87,7 @@ fn parse_hub_content(raw: Option<&str>) -> String {
     strip_html(raw)
 }
 
-fn truncar(texto: &str, max: usize) -> String {
+pub(crate) fn truncar(texto: &str, max: usize) -> String {
     if texto.chars().count() <= max {
         texto.to_string()
     } else {
@@ -96,7 +96,7 @@ fn truncar(texto: &str, max: usize) -> String {
 }
 
 /// `extractJsonObject`: el texto como JSON, o el primer objeto balanceado.
-fn extraer_objeto(texto: &str) -> Option<Value> {
+pub(crate) fn extraer_objeto(texto: &str) -> Option<Value> {
     static INI: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)^```(?:json)?\s*"));
     static FIN: LazyLock<Regex> = LazyLock::new(|| re(r"(?i)```\s*$"));
     let t = texto.trim();
@@ -198,6 +198,33 @@ async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<Str
     let sol = &b.sol;
     let secciones = secciones_por_tipo(sol["tipo"].as_str().unwrap_or(""));
     let g = |k: &str| txt(sol, k);
+    // Lo que la propuesta comercial le prometió al cliente es el alcance vendido: tiene que entrar al PRD.
+    let propuestas_txt = match sol["leadId"].as_str() {
+        Some(l) => {
+            let v = fetch_json(
+                &st.pool,
+                r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('title', p.title, 'description', p.description, 'amount', p.amount, 'status', p.status::text)
+                        ORDER BY (p.status::text = 'ACCEPTED') DESC, p."createdAt" DESC), '[]'::jsonb) FROM "Proposal" p WHERE p."leadId" = $1"#,
+                &[B::T(l.to_string())],
+            )
+            .await?;
+            v.as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|p| format!("[{}] {} — {}\n{}", p["status"].as_str().unwrap_or(""), p["title"].as_str().unwrap_or(""), p["amount"], strip_html(p["description"].as_str().unwrap_or(""))))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        }
+        None => String::new(),
+    };
+    // Si ya hay diseño técnico, el PRD no puede contradecirlo.
+    let diseno_txt = {
+        let d: Value = sol["disenoTecnico"].as_str().and_then(|t| serde_json::from_str(t).ok()).unwrap_or(Value::Null);
+        let nombres = |k: &str, c: &str| d[k].as_array().map(|a| a.iter().filter_map(|x| x[c].as_str()).filter(|x| !x.is_empty()).take(30).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+        let (e, stk, i) = (nombres("entidades", "nombre"), nombres("stack", "tecnologia"), nombres("integraciones", "sistema"));
+        if e.is_empty() && stk.is_empty() && i.is_empty() { String::new() } else { format!("Entidades: {e}\nStack: {stk}\nIntegraciones: {i}") }
+    };
     let contexto = [
         Some(format!("Nombre: {}", sol["nombre"].as_str().unwrap_or(""))),
         g("descripcion").map(|d| format!("Descripción: {d}")),
@@ -207,7 +234,9 @@ async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<Str
         Some(b.riesgos.clone()).filter(|f| !f.is_empty()).map(|f| format!("Riesgos ya identificados:\n{f}")),
         Some(b.hitos.clone()).filter(|f| !f.is_empty()).map(|f| format!("Hitos de cumplimiento:\n{f}")),
         b.lead.as_ref().map(|l| format!("Cliente/Lead asociado: {} (contacto: {})", l["companyName"].as_str().unwrap_or(""), l["contactName"].as_str().unwrap_or(""))),
-        Some(b.hub.clone()).filter(|f| !f.is_empty()).map(|f| format!("Notas del proceso de preventa (Lead Hub):\n{}", truncar(&f, 6000))),
+        Some(propuestas_txt.clone()).filter(|f| !f.is_empty()).map(|f| format!("Propuestas comerciales (lo prometido al cliente; la ACCEPTED es el alcance vendido):\n{}", truncar(&f, 6000))),
+        Some(b.hub.clone()).filter(|f| !f.is_empty()).map(|f| format!("Notas del proceso de preventa (Lead Hub):\n{}", truncar(&f, 12000))),
+        Some(diseno_txt.clone()).filter(|f| !f.is_empty()).map(|f| format!("Diseño técnico ya definido (el PRD no debe contradecirlo):\n{f}")),
     ]
     .into_iter()
     .flatten()
@@ -218,7 +247,10 @@ async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<Str
         || !b.fases.is_empty()
         || !b.riesgos.is_empty()
         || !b.hitos.is_empty()
-        || !b.hub.is_empty();
+        || !b.hub.is_empty()
+        || !propuestas_txt.is_empty();
+    let con_requisitos = secciones.contains(&"requisitos");
+    let secciones_base: Vec<&str> = secciones.iter().copied().filter(|x| *x != "requisitos").collect();
 
     let system = format!(
         r#"Sos un analista de producto que redacta borradores de PRD (Product Requirements Document) para ArchiTechIA, una consultora de IA. El PRD debe ser un documento robusto y desglosado — cada sección es una lista de ítems concretos, nunca un párrafo genérico de relleno.
@@ -248,27 +280,67 @@ Este es un documento REAL para uso profesional, no un resumen — priorizá prof
 - "objetivosEspecificos": 4-6 ítems, cada uno medible.
 - "dentroDeAlcance" y "fueraDeAlcance": 4-6 ítems cada uno.
 - "personas": 3-4 personas distintas.
-- "requisitos": entre 8 y 12 (no menos de 8 cuando la sección aplica), cubriendo el flujo completo de principio a fin, no solo el caso feliz — incluí también algún caso borde o de error. Cada uno con criterio de aceptación concreto, medible y verificable (no "funciona bien", sino algo que se pueda comprobar), y prioridad MoSCoW realista (no todo puede ser MUST — repartí entre las 4).
+- Los requisitos funcionales NO los redactes aquí: se generan aparte (omite la clave "requisitos").
 - "requisitosNoFuncionales": 4-6 ítems, al menos uno de cada categoría relevante (performance, seguridad, compatibilidad, escalabilidad).
 - "metricas": 3-5 KPIs, cada uno con meta numérica concreta cuando sea posible (porcentaje, tiempo, cantidad) y cómo se mide en términos operativos reales.
 - "riesgos" y "dependencias": 3-5 ítems cada uno.
 - "supuestos" y "preguntasAbiertas": 3-5 ítems cada uno.
 No dejes una sección corta o vacía por pereza si el contexto da para llenarla — es preferible un documento largo y específico a uno breve y genérico.
-Si el contexto es escaso, hacé tu mejor inferencia razonable a partir del nombre y tipo de Solución, pero no inventes detalles muy específicos (nombres de personas, cifras exactas) que no estén en el contexto."#,
-        secciones.join(", ")
+Si el contexto es escaso, hacé tu mejor inferencia razonable a partir del nombre y tipo de Solución, pero no inventes detalles muy específicos (nombres de personas, cifras exactas) que no estén en el contexto.
+Si hay una propuesta comercial aceptada, el "dentroDeAlcance" tiene que reflejar fielmente lo que ella promete, y lo que la propuesta no ofrece va en "fueraDeAlcance"."#,
+        secciones_base.join(", ")
     );
     let usuario = format!("Generá el borrador de PRD con este contexto:\n\n{}", if contexto.is_empty() { "(sin contexto adicional — solo el nombre y tipo de Solución)" } else { &contexto });
-    let salida = match llm::call_open_code(&st, &system, &usuario, &format!("prd-{id}"), 8192, 170).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("prd-generate: {e}");
-            return Err(bad_gateway("El modelo no respondió correctamente."));
+    let system_req = r#"Eres un analista de producto de ArchiTechIA, una consultora de IA. Redactas los REQUISITOS FUNCIONALES de un PRD a partir del contexto del proyecto.
+Devuelve SOLO un objeto JSON (sin markdown ni texto alrededor): { "requisitos": [ { "tipo": "historia" | "caso_uso", "texto": "string", "criterioAceptacion": "string", "prioridad": "MUST" | "SHOULD" | "COULD" | "WONT", "fuente": "propuesta" | "preventa" | "inferido" } ] }
+- "fuente": "propuesta" si lo promete la propuesta comercial; "preventa" si sale de las notas del cliente; "inferido" si lo deduces tú porque el sistema lo necesita aunque nadie lo pidió expresamente. No presentes como pedido del cliente lo que inferiste.
+- Cantidad: entre 12 y 25 requisitos según el tamaño del alcance (un sistema de gestión mediano suele necesitar entre 18 y 25). Mejor muchos requisitos precisos que pocos genéricos.
+- Cada criterio de aceptación es concreto y verificable (nada como "funciona bien"). Las prioridades están repartidas de verdad: como referencia un tercio MUST, un tercio SHOULD y el resto entre COULD y WONT.
+- COBERTURA OBLIGATORIA, cuando el contexto lo justifique: cada ítem del alcance vendido; cada rol o persona; el ciclo de vida completo del dato central (crear, consultar, editar, dar de baja); permisos y roles; validaciones y manejo de errores; cada integración externa y qué pasa si no responde; reportes o visibilidad para quien administra; notificaciones; configuración básica.
+- No inventes funcionalidades que el contexto contradiga ni cifras que no estén en él."#;
+    let usuario_req = format!("Redacta los requisitos funcionales de este proyecto con este contexto:\n\n{}", if contexto.is_empty() { "(sin contexto adicional — solo el nombre y tipo de Solución)" } else { &contexto });
+    let sesion_req = format!("prd-req-{id}");
+    let sesion_prd = format!("prd-{id}");
+    let (borrador, requisitos) = tokio::join!(llamar_json(&st, &system, &usuario, &sesion_prd, 8192), async {
+        if con_requisitos {
+            Some(llamar_json(&st, system_req, &usuario_req, &sesion_req, 7168).await)
+        } else {
+            None
         }
-    };
-    match extraer_objeto(&salida) {
-        Some(p) if p.is_object() => Ok(Json(json!({ "prd": p, "tieneContexto": tiene_contexto }))),
-        _ => Err(bad_gateway("No se pudo interpretar la respuesta del modelo.")),
+    });
+    let mut prd = borrador?;
+    let mut avisos: Vec<String> = vec![];
+    match requisitos {
+        Some(Ok(v)) => match v.get("requisitos").filter(|r| r.is_array()).cloned() {
+            Some(r) => prd["requisitos"] = r,
+            None => avisos.push("La IA no devolvió requisitos: genera esa sección aparte.".into()),
+        },
+        Some(Err(_)) => avisos.push("No se pudieron generar los requisitos funcionales: genera esa sección aparte.".into()),
+        None => {}
     }
+    Ok(Json(json!({ "prd": prd, "tieneContexto": tiene_contexto, "avisos": avisos })))
+}
+
+/// Una llamada al modelo que debe devolver un objeto JSON; si no es JSON válido reintenta una vez (con menos tiempo,
+/// para no pasar los 300 s del proxy).
+async fn llamar_json(st: &AppState, system: &str, usuario: &str, sesion: &str, max_tokens: u32) -> Result<Value, ApiError> {
+    for intento in 0..2 {
+        let u = if intento == 0 { usuario.to_string() } else { format!("{usuario}\n\nIMPORTANTE: tu respuesta anterior no era un JSON válido. Devuelve SOLO un objeto JSON válido, sin texto antes ni después.") };
+        let salida = match llm::call_open_code(st, system, &u, sesion, max_tokens, if intento == 0 { 140 } else { 100 }).await {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::error!("prd-generate: {e}");
+                if intento == 1 {
+                    return Err(bad_gateway("El modelo no respondió correctamente."));
+                }
+                continue;
+            }
+        };
+        if let Some(v) = extraer_objeto(&salida).filter(|v| v.is_object()) {
+            return Ok(v);
+        }
+    }
+    Err(bad_gateway("No se pudo interpretar la respuesta del modelo."))
 }
 
 // ═══════════════════════════════ PRD: ENTREVISTA POR SECCIÓN ═══════════════════════════════
@@ -664,7 +736,7 @@ Reglas:
 - Fundamenta cada componente en el contexto. Si el Diseño Técnico ya define stack, entidades o integraciones, respétalos. Si hay un diagrama actual, consérvalo y complétalo/corrígelo en vez de rehacerlo de cero.
 - No inventes tecnologías que el contexto contradiga. Cuando el contexto no dice la tecnología, propón la más razonable y deja claro el rol en "description".
 - Incluye las integraciones externas, canales (por ejemplo WhatsApp, correo), proveedores de IA, colas, cachés y almacenamiento que el contexto mencione o exija.
-- Entre 6 y 16 componentes. Cada uno con:
+- Entre 6 y 24 componentes (un sistema grande necesita más de 16: sepáralos por capa y por integración). Cada uno con:
   - "label": nombre corto, máximo 22 caracteres
   - "description": tecnología o rol, máximo 40 caracteres
   - "type": exactamente uno de: frontend | backend | database | api | ia | queue | cache | externo
@@ -1003,7 +1075,7 @@ async fn arquitectura_generar(State(st): State<AppState>, o: Opcional, Path(id):
     let mut usadas: std::collections::HashSet<(i64, i64)> = Default::default();
     let mut ids: std::collections::HashSet<String> = Default::default();
     let mut nodes: Vec<Value> = vec![];
-    for (i, n) in nodos_in.iter().take(16).enumerate() {
+    for (i, n) in nodos_in.iter().take(24).enumerate() {
         let mut nid = n["id"].as_str().filter(|x| !x.is_empty() && !ids.contains(*x)).map(String::from).unwrap_or_else(|| format!("n{}", i + 1));
         while ids.contains(&nid) {
             nid.push('_');

@@ -101,6 +101,16 @@ static CACHE: std::sync::LazyLock<crate::util::CacheJson> = std::sync::LazyLock:
 
 async fn items_listar(State(st): State<AppState>, _s: Session, Query(q): Query<HashMap<String, String>>) -> ApiResult<Json<std::sync::Arc<Value>>> {
     let ligero = q.get("ligero").map(|v| v == "1" || v == "true").unwrap_or(false);
+    // Solo los ítems de una Solución (el hub no necesita todo el backlog); `conRequisito=1`: solo los que nacieron de un requisito del PRD.
+    if let Some(sol) = q.get("solucionId").filter(|x| !x.is_empty()) {
+        let json = if ligero { ITEM_LIGERO_JSON } else { ITEM_JSON };
+        let solo_prd = q.get("conRequisito").map(|v| v == "1" || v == "true").unwrap_or(false);
+        let sql = format!(
+            r#"SELECT COALESCE(jsonb_agg({json} ORDER BY b."createdAt" ASC), '[]'::jsonb) FROM "BacklogItem" b WHERE b."solucionId" = $1 {}"#,
+            if solo_prd { r#"AND b."prdRequisitoId" IS NOT NULL"# } else { "" }
+        );
+        return Ok(Json(std::sync::Arc::new(fetch_json(&st.pool, &sql, &[B::T(sol.clone())]).await?)));
+    }
     let (json, clave) = if ligero { (ITEM_LIGERO_JSON, "items-ligero") } else { (ITEM_JSON, "items") };
     let sql = format!(r#"SELECT COALESCE(jsonb_agg({json} ORDER BY b."createdAt" ASC), '[]'::jsonb) FROM "BacklogItem" b"#);
     Ok(Json(crate::util::fetch_json_cacheado(&st.pool, &CACHE, clave, &sql, &[]).await?))
@@ -293,6 +303,7 @@ async fn item_actualizar(State(st): State<AppState>, sesion: Session, Path(id): 
         }
     }
     if presente(&body, "status") {
+        crate::routes::solucion_hub::sincronizar_requisito(&st, &id, false).await;
         let estado = s(&body, "status").unwrap_or_default();
         log_activity(&st.pool, "STATUS_CHANGED", &format!("cambió el estado de {titulo} a {estado}"), "backlogItem", &id, uid(&sesion), None).await;
     } else {
@@ -794,6 +805,7 @@ async fn ejecucion_crear(State(st): State<AppState>, _s: Session, Path(id): Path
     .ok_or_else(fallo)?;
 
     // Sincroniza fechas y resultado del ítem según el estado final.
+    let id_item = id.clone();
     let r = match estado.as_str() {
         "RUNNING" => exec(&st.pool, r#"UPDATE "BacklogItem" SET status = 'IN_PROGRESS', "fechaInicio" = NOW() WHERE id = $1 AND status = 'BACKLOG'"#, &[B::T(id)]).await,
         "DONE" => exec(&st.pool, r#"UPDATE "BacklogItem" SET status = 'DONE', "fechaFin" = NOW(), resultado = COALESCE($2, resultado) WHERE id = $1"#, &[B::T(id), B::OT(resumen)]).await,
@@ -804,5 +816,8 @@ async fn ejecucion_crear(State(st): State<AppState>, _s: Session, Path(id): Path
         tracing::error!("ejecucion_crear (sync): {e}");
         fallo()
     })?;
+    if estado == "DONE" || estado == "FAILED" {
+        crate::routes::solucion_hub::sincronizar_requisito(&st, &id_item, false).await;
+    }
     Ok((axum::http::StatusCode::CREATED, Json(json!({ "id": exec_id, "status": "created" }))))
 }

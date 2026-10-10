@@ -894,6 +894,8 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
 
     emitir_traza(st, tarea, Some(exec_id), if verificado == "DONE" { "check" } else { "fail" }, &format!("estado final: {verificado}")).await;
     exec(&st.pool, r#"UPDATE "BacklogItem" SET status=$2, "fechaFin"=NOW(), resultado=$3 WHERE id=$1"#, &[B::T(tarea.into()), B::T(verificado.clone()), B::T(resultado_final.clone())]).await.map_err(err_db)?;
+    // El requisito del PRD que originó la tarea sigue su estado: verificada por el Motor = VERIFICADO.
+    crate::routes::solucion_hub::sincronizar_requisito(st, tarea, verificado == "DONE").await;
 
     if verificado == "DONE" {
         if let Some(sprint_id) = so(&t, "sprintId") {

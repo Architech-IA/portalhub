@@ -137,13 +137,43 @@ pub fn resumir(diseno: Option<&str>, arquitectura: Option<&str>) -> Option<Disen
     Some(Diseno { estado, texto: t, entidades: nombres_entidades })
 }
 
+/// Los diagramas Mermaid del hub (ER, secuencia, C4, flujo) como referencia: son la parte del diseño que no cabe en tablas.
+pub fn bloque_diagramas(diagramas: Option<&str>) -> Option<String> {
+    let d: Value = diagramas.and_then(|t| serde_json::from_str(t).ok())?;
+    let lista = d.as_array()?;
+    let partes: Vec<String> = lista
+        .iter()
+        .filter_map(|x| {
+            let codigo = x["codigo"].as_str().filter(|c| !c.trim().is_empty())?;
+            Some(format!("[{} — {}]\n{}", x["tipo"].as_str().unwrap_or("diagrama"), x["titulo"].as_str().unwrap_or("sin título"), cortar(codigo, 1800)))
+        })
+        .take(6)
+        .collect();
+    if partes.is_empty() {
+        None
+    } else {
+        Some(format!("DIAGRAMAS DE REFERENCIA (Mermaid):\n{}", partes.join("\n\n")))
+    }
+}
+
 /// Lee el diseño de la Solución. Nunca falla: sin diseño (o con error de lectura) el Motor sigue como antes.
 pub async fn cargar(st: &AppState, solucion: &str) -> Option<Diseno> {
-    let v = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('d', "disenoTecnico", 'a', arquitectura) FROM "Solucion" WHERE id = $1"#, &[B::T(solucion.to_string())])
+    let v = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('d', "disenoTecnico", 'a', arquitectura, 'g', diagramas) FROM "Solucion" WHERE id = $1"#, &[B::T(solucion.to_string())])
         .await
         .ok()
         .flatten()?;
-    resumir(v["d"].as_str(), v["a"].as_str())
+    let mut d = resumir(v["d"].as_str(), v["a"].as_str());
+    if let Some(g) = bloque_diagramas(v["g"].as_str()) {
+        d = Some(match d {
+            Some(mut x) => {
+                x.texto.push('\n');
+                x.texto.push_str(&g);
+                x
+            }
+            None => Diseno { estado: "BORRADOR".into(), texto: format!("{ENCABEZADO} (estado: BORRADOR) ===\n{g}"), entidades: vec![] },
+        });
+    }
+    d
 }
 
 // ── Esquema de Prisma vs entidades documentadas ─────────────────────────────────────────────

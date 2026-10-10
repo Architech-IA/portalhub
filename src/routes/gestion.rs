@@ -33,7 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proposals/{id}/tasks/{task_id}", patch(ptarea_marcar).delete(ptarea_eliminar))
         // Soluciones
         .route("/api/soluciones", get(soluciones_listar).post(crate::routes::triggers::solucion_crear))
-        .route("/api/soluciones/{id}", get(solucion_obtener).put(solucion_actualizar).delete(solucion_eliminar))
+        .route("/api/soluciones/{id}", get(solucion_obtener).put(crate::routes::solucion_hub::solucion_actualizar).delete(crate::routes::solucion_hub::solucion_eliminar))
         // Iniciativas
         .route("/api/iniciativas", get(iniciativas_listar).post(iniciativa_crear))
         .route("/api/iniciativas/delete-requests", get(solicitudes_listar).post(solicitud_crear))
@@ -262,53 +262,6 @@ async fn soluciones_listar(State(st): State<AppState>, _s: Session, req: Request
 async fn solucion_obtener(State(st): State<AppState>, _s: Session, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let sql = format!(r#"SELECT {SOLUCION_JSON} FROM "Solucion" so WHERE so.id = $1"#);
     fetch_json_opt(&st.pool, &sql, &[B::T(id)]).await?.map(Json).ok_or_else(|| ApiError::not_found("No encontrado"))
-}
-
-async fn solucion_actualizar(State(st): State<AppState>, sesion: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
-    let fallo = || ApiError::internal("Error al actualizar la solución");
-    let mut up = Upd::new(&id);
-    if let Some(v) = s(&body, "nombre") {
-        up.set("nombre", B::T(v));
-    }
-    up.set("descripcion", B::OT(texto_o(&body, "descripcion", None).map_err(|_| fallo())?));
-    if let Some(v) = s(&body, "tipo") {
-        up.set("tipo", B::T(v));
-    }
-    up.set("estado", B::T(texto_o(&body, "estado", Some("ACTIVO")).map_err(|_| fallo())?.unwrap_or_default()));
-    up.set("valorEstimado", B::F(parse_float(body.get("valorEstimado"))));
-    up.set("leadId", B::OT(texto_o(&body, "leadId", None).map_err(|_| fallo())?));
-    for (k, def) in [
-        ("repositorio", None),
-        ("arquitectura", Some("[]")),
-        ("arquitecturaHtml", None),
-        ("planTrabajo", None),
-        ("cronograma", Some("[]")),
-        ("prd", Some("{}")),
-        ("disenoTecnico", Some("{}")),
-        ("planEjecucion", Some("{}")),
-    ] {
-        if presente(&body, k) {
-            up.set(k, B::OT(texto_o(&body, k, def).map_err(|_| fallo())?));
-        }
-    }
-    let sql = up.con("Solucion", &format!("SELECT {SOLUCION_JSON} FROM up so"));
-    let solucion = match fetch_json_opt(&st.pool, &sql, &up.binds).await {
-        Ok(Some(v)) => v,
-        _ => return Err(fallo()),
-    };
-    log_activity(&st.pool, "UPDATED", &format!("actualizó la solución {}", s(&body, "nombre").unwrap_or_default()), "solucion", &id, uid(&sesion), None).await;
-    Ok(Json(solucion))
-}
-
-async fn solucion_eliminar(State(st): State<AppState>, sesion: Session, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let fallo = || ApiError::internal("Error al eliminar la solución");
-    let nombre = fetch_text_opt(&st.pool, r#"SELECT nombre FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await.map_err(|_| fallo())?;
-    match exec(&st.pool, r#"DELETE FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await {
-        Ok(n) if n > 0 => {}
-        _ => return Err(fallo()),
-    }
-    log_activity(&st.pool, "UPDATED", &format!("eliminó la solución {}", nombre.unwrap_or_default()), "solucion", &id, uid(&sesion), None).await;
-    Ok(Json(json!({ "ok": true })))
 }
 
 // ═══════════════════════════════ INICIATIVAS ═══════════════════════════════
@@ -556,7 +509,10 @@ async fn hitos_listar(State(st): State<AppState>, sesion: Session, Query(q): Que
     Ok(Json(
         fetch_json(
             &st.pool,
-            r#"SELECT COALESCE(jsonb_agg(to_jsonb(h) ORDER BY h."fechaComprometida" ASC), '[]'::jsonb) FROM "Hito" h WHERE h."solucionId" = $1"#,
+            r#"SELECT COALESCE(jsonb_agg(to_jsonb(h) || jsonb_build_object('sprint', (SELECT jsonb_build_object('id', s.id, 'sprintCode', s."sprintCode", 'name', s.name,
+                   'total', (SELECT COUNT(*) FROM "BacklogItem" i WHERE i."sprintId" = s.id),
+                   'hechas', (SELECT COUNT(*) FROM "BacklogItem" i WHERE i."sprintId" = s.id AND i.status = 'DONE')) FROM "Sprint" s WHERE s.id = h."sprintId"))
+                 ORDER BY h."fechaComprometida" ASC), '[]'::jsonb) FROM "Hito" h WHERE h."solucionId" = $1"#,
             &[B::T(sol.clone())],
         )
         .await?,
@@ -569,8 +525,8 @@ async fn hito_crear(State(st): State<AppState>, sesion: Session, Json(body): Jso
         return Err(ApiError::bad_request("solucionId y titulo son requeridos"));
     };
     let sql = format!(
-        r#"WITH ins AS (INSERT INTO "Hito" (id, "solucionId", titulo, descripcion, "fechaComprometida", "fechaReal", estado, "createdAt", "updatedAt")
-             VALUES ($1, $2, $3, $4, {}, {}, COALESCE($7, 'PENDIENTE'), NOW(), NOW()) RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
+        r#"WITH ins AS (INSERT INTO "Hito" (id, "solucionId", titulo, descripcion, "fechaComprometida", "fechaReal", estado, monto, "estadoPago", "sprintId", "createdAt", "updatedAt")
+             VALUES ($1, $2, $3, $4, {}, {}, COALESCE($7, 'PENDIENTE'), COALESCE($8::float8, 0), 'PENDIENTE', $9, NOW(), NOW()) RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
         ts_js_opt(5),
         ts_js_opt(6)
     );
@@ -586,6 +542,8 @@ async fn hito_crear(State(st): State<AppState>, sesion: Session, Json(body): Jso
                 B::OT(fecha_cuerpo(&body, "fechaComprometida")),
                 B::OT(fecha_cuerpo(&body, "fechaReal")),
                 B::OT(s_o_nulo(&body, "estado")),
+                B::OF(num_o_nulo(&body, "monto")),
+                B::OT(s_o_nulo(&body, "sprintId")),
             ],
         )
         .await?,
@@ -608,7 +566,41 @@ async fn hito_actualizar(State(st): State<AppState>, sesion: Session, Path(id): 
         }
     }
     if let Some(e) = s(&body, "estado") {
+        if e == "CUMPLIDO" && !presente(&body, "fechaReal") {
+            up.sets.push(r#""fechaReal" = COALESCE("fechaReal", NOW())"#.to_string());
+        }
         up.set("estado", B::T(e));
+    }
+    if presente(&body, "monto") {
+        up.set("monto", B::F(parse_float(body.get("monto"))));
+    }
+    if presente(&body, "sprintId") {
+        up.set("sprintId", B::OT(s_o_nulo(&body, "sprintId")));
+    }
+    if let Some(p) = s(&body, "estadoPago") {
+        if !["PENDIENTE", "FACTURADO", "PAGADO"].contains(&p.as_str()) {
+            return Err(ApiError::bad_request("Estado de pago inválido"));
+        }
+        if p != "PENDIENTE" && !(sesion.is_admin() || sesion.is_service) {
+            return Err(ApiError::forbidden("Solo un administrador registra facturas y pagos"));
+        }
+        up.set("estadoPago", B::T(p));
+    }
+    // Aceptación del cliente: un objeto { nombre, nota } la registra; null la quita (solo administradores).
+    if let Some(a) = body.get("aceptar") {
+        if !(sesion.is_admin() || sesion.is_service) {
+            return Err(ApiError::forbidden("Solo un administrador registra la aceptación del cliente"));
+        }
+        if a.is_object() {
+            let quien = s_o_nulo(a, "nombre").unwrap_or_else(|| if sesion.name.is_empty() { sesion.email.clone() } else { sesion.name.clone() });
+            up.set("aceptadoPor", B::T(quien));
+            up.sets.push(r#""aceptadoEn" = NOW()"#.to_string());
+            up.set("aceptadoNota", B::OT(s_o_nulo(a, "nota")));
+        } else {
+            up.sets.push(r#""aceptadoEn" = NULL"#.to_string());
+            up.set("aceptadoPor", B::OT(None));
+            up.set("aceptadoNota", B::OT(None));
+        }
     }
     match fetch_json_opt(&st.pool, &up.sql("Hito"), &up.binds).await {
         Ok(Some(v)) => Ok(Json(v)),
