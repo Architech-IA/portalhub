@@ -65,6 +65,6 @@ comerciales corregidos. Código: `src/routes/solucion_hub.rs` (nuevo), `gestion.
 
 ```bash
 cd /root/portal-architechia && set -a && . ./.env && set +a
-node /root/repos/portalhub/tools/parity/hub.js          # servidor: 60 comprobaciones, limpia lo que crea
+node /root/repos/portalhub/tools/parity/hub.js          # servidor: 54 comprobaciones, limpia lo que crea
 node /root/repos/portalhub/tools/parity/hub.js --ia     # además PRD en dos llamadas y diagrama Mermaid con el modelo real
 ```
