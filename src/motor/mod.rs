@@ -10,6 +10,7 @@ pub mod despliegue;
 pub mod diseno;
 pub mod ejecutor;
 pub mod grafo;
+pub mod lead;
 pub mod repo;
 
 use axum::{

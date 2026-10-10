@@ -74,8 +74,9 @@ pub async fn leer_nota(ruta_rel: &str) -> Option<String> {
 }
 
 // ── Contexto ─────────────────────────────────────────────────────────────────────────────────
-const MAX_CONTEXTO: usize = 8000;
-const MAX_TAREAS_SPRINT: usize = 8;
+// Antes 8.000 (unos 2.000 tokens): quedaba corto al sumar el diseño técnico. Las tareas gastan 8-55 mil tokens, y el bloque estable se reutiliza entre tareas del sprint.
+const MAX_CONTEXTO: usize = 40_000;
+const MAX_TAREAS_SPRINT: usize = 20;
 
 fn miles_es_ar(n: usize) -> String {
     let s = n.to_string();
@@ -141,9 +142,28 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         estable.push(format!("  Goal: {g}"));
     }
 
+    // La Solución a la que pertenece la tarea: por su sprint o, en las actividades de fase (sin sprint), directamente.
+    let sol_ctx = so(&t, "solId").or_else(|| so(&t, "solucionDirecta"));
+    if so(&t, "solId").is_none() {
+        if let Some(sid) = &sol_ctx {
+            if let Some((codigo, nombre, descripcion)) = super::lead::solucion_basica(st, sid).await {
+                estable.push(format!("SOLUTION: [{codigo}] {nombre}"));
+                if !descripcion.is_empty() {
+                    estable.push(format!("  {descripcion}"));
+                }
+            }
+        }
+    }
+    // El lead y el cliente: sin esto las tareas de preventa (ficha, briefing, acta, propuesta) no tienen ni el nombre de la empresa.
+    if let Some(sid) = &sol_ctx {
+        if let Some(b) = super::lead::cargar(st, sid).await {
+            estable.push(String::new());
+            estable.push(b);
+        }
+    }
     // Diseño técnico y arquitectura documentados en el hub: la referencia que el agente debe respetar.
-    if let Some(sid) = so(&t, "solId").or_else(|| so(&t, "solucionDirecta")) {
-        if let Some(d) = super::diseno::cargar(st, &sid).await {
+    if let Some(sid) = &sol_ctx {
+        if let Some(d) = super::diseno::cargar(st, sid).await {
             estable.push(String::new());
             estable.push(d.texto);
         }
@@ -153,7 +173,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('agentSlug', x."agentSlug", 'content', x.content) ORDER BY x."createdAt" DESC), '[]'::jsonb) FROM
              (SELECT dm."agentSlug", dm.content, dm."createdAt" FROM "DebateMessage" dm JOIN "CouncilProposal" cp ON dm."proposalId" = cp.id
-               WHERE cp."solucionId" = $1 AND dm.round = 10 ORDER BY dm."createdAt" DESC LIMIT 3) x"#,
+               WHERE cp."solucionId" = $1 AND dm.round = 10 ORDER BY dm."createdAt" DESC LIMIT 5) x"#,
         &[B::OT(so(&t, "solId"))],
     )
     .await
@@ -162,7 +182,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
     if !consejo.is_empty() {
         estable.push("\n=== COUNCIL DEBATE (PLANNING) ===".into());
         for m in consejo.iter().rev() {
-            estable.push(format!("[{}]: {}", sg(m, "agentSlug"), cortar(&sg(m, "content"), 400)));
+            estable.push(format!("[{}]: {}", sg(m, "agentSlug"), cortar(&sg(m, "content"), 1200)));
         }
     }
 
@@ -176,7 +196,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
     if let Some(codigo) = previo {
         if let Some(nota) = leer_nota(&format!("shared/decisions/sprints/{codigo}.md")).await {
             estable.push(format!("\n=== PREVIOUS SPRINT SUMMARY (memoria: {codigo}) ==="));
-            estable.push(cortar(nota.trim(), 600));
+            estable.push(cortar(nota.trim(), 3000));
         }
     }
 
@@ -184,7 +204,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."finishedAt" DESC), '[]'::jsonb) FROM
              (SELECT te."agentName", te."resultSummary", te."durationMs", te."finishedAt" FROM "TaskExecution" te JOIN "BacklogItem" bi ON te."backlogItemId" = bi.id
-               WHERE bi."areaId" = $1 AND bi."solucionId" = $2 AND te.status = 'DONE' ORDER BY te."finishedAt" DESC LIMIT 3) x"#,
+               WHERE bi."areaId" = $1 AND bi."solucionId" = $2 AND te.status = 'DONE' ORDER BY te."finishedAt" DESC LIMIT 5) x"#,
         &[B::OT(so(&t, "areaId")), B::OT(so(&t, "solId"))],
     )
     .await
@@ -194,7 +214,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         estable.push("\n=== AREA EXECUTION HISTORY ===".into());
         for h in &historial {
             let dur = h["durationMs"].as_f64().filter(|d| *d != 0.0).map(|d| format!(" ({}s)", (d / 1000.0).round() as i64)).unwrap_or_default();
-            let res = so(h, "resultSummary").filter(|x| !x.is_empty()).map(|r| cortar(&r, 200)).unwrap_or_else(|| "—".into());
+            let res = so(h, "resultSummary").filter(|x| !x.is_empty()).map(|r| cortar(&r, 500)).unwrap_or_else(|| "—".into());
             estable.push(format!("{}{dur}: {res}", sg(h, "agentName")));
         }
     }
@@ -219,14 +239,14 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
             variable.push(format!("({omitidas} tareas anteriores omitidas por espacio — mostrando las {MAX_TAREAS_SPRINT} mas recientes)"));
         }
         for x in tareas.iter().rev() {
-            let res = so(x, "resultado").filter(|r| !r.is_empty()).map(|r| format!(" → {}", cortar(&r, 120))).unwrap_or_default();
+            let res = so(x, "resultado").filter(|r| !r.is_empty()).map(|r| format!(" → {}", cortar(&r, 300))).unwrap_or_default();
             variable.push(format!("[{}] {}: {}{res}", sg(x, "status"), sg(x, "taskCode"), sg(x, "title")));
         }
     }
 
     let decisiones = fetch_json(
         &st.pool,
-        r#"SELECT COALESCE(jsonb_agg(summary ORDER BY "createdAt" DESC), '[]'::jsonb) FROM (SELECT summary, "createdAt" FROM "SprintDecision" WHERE "sprintId" = $1 ORDER BY "createdAt" DESC LIMIT 5) x"#,
+        r#"SELECT COALESCE(jsonb_agg(summary ORDER BY "createdAt" DESC), '[]'::jsonb) FROM (SELECT summary, "createdAt" FROM "SprintDecision" WHERE "sprintId" = $1 ORDER BY "createdAt" DESC LIMIT 10) x"#,
         &[B::OT(sprint_id)],
     )
     .await
@@ -705,6 +725,12 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                 emitir_traza(st, tarea, Some(exec_id), "info", &format!("el agente declaró un cambio de diseño — conviene actualizar el Diseño técnico del hub: {declarado}")).await;
             }
             let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), diseno.as_ref().map(|d| d.criterio()), &c.resumen, chequeo.corrio, &archivos, &cambios).await;
+            // El revisor marca por su cuenta si el diff se aparta del diseño documentado (no depende de que el agente lo haya declarado).
+            for x in &v.checklist {
+                if let Some(r) = x["reason"].as_str().filter(|r| r.contains(super::diseno::MARCA_REVISOR)) {
+                    emitir_traza(st, tarea, Some(exec_id), "info", &format!("el revisor detectó una desviación del diseño técnico — conviene actualizar el Diseño técnico del hub o revisar el cambio: {}", cortar(r, 300))).await;
+                }
+            }
             verificado = if v.paso { "DONE".into() } else { "FAILED".into() };
             checklist = v.checklist;
             if chequeo.corrio {

@@ -144,6 +144,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN mkdir -p public
+# El servidor no tiene swap y comparte RAM con el portal: se limita el heap de Node para que una compilación grande falle sola en vez de arrastrar el host.
+ENV NODE_OPTIONS=--max-old-space-size=1536
 RUN npm run build
 RUN mkdir -p /salida && \
     if [ -d .next/standalone ]; then \
@@ -178,7 +180,8 @@ CMD ["sh", "iniciar.sh"]
 fn asegurar_dockerfile() -> R<()> {
     std::fs::create_dir_all(DEPLOYS).map_err(|e| e.to_string())?;
     let p = dockerfile_generico();
-    if !p.exists() {
+    // Se reescribe si cambió la plantilla (antes solo se creaba si faltaba y los cambios nunca llegaban).
+    if std::fs::read_to_string(&p).map(|c| c != DOCKERFILE).unwrap_or(true) {
         std::fs::write(&p, DOCKERFILE).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -262,7 +265,7 @@ pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
     let r: R<Value> = async {
         let repo = resolver_repo(st, Some(solucion_id)).await?;
         // El despliegue siempre parte de lo ya mergeado y revisado en main.
-        sh("git", &["fetch", "origin", "main"], Some(&repo), 300).await?;
+        super::repo::git_con_credenciales(st, &["fetch", "origin", "main"], &repo).await?;
         sh("git", &["checkout", "main"], Some(&repo), 300).await?;
         sh("git", &["reset", "--hard", "origin/main"], Some(&repo), 300).await?;
         asegurar_dockerfile()?;
@@ -398,6 +401,15 @@ pub async fn aprovisionar_base(st: &AppState, solucion_id: &str) -> R<Value> {
     r
 }
 
+/// Versión de Prisma que fija el proyecto (devDependencies/dependencies `prisma`, o `@prisma/client`), sin el prefijo ^ o ~.
+pub(crate) fn version_prisma(repo: &Path) -> Option<String> {
+    let pkg: Value = serde_json::from_str(&std::fs::read_to_string(repo.join("package.json")).ok()?).ok()?;
+    let crudo = ["devDependencies", "dependencies"].iter().find_map(|k| pkg[k]["prisma"].as_str()).or_else(|| pkg["dependencies"]["@prisma/client"].as_str())?;
+    let v = crudo.trim_start_matches(|c: char| !c.is_ascii_digit());
+    let ok = v.split('.').count() == 3 && v.split('.').all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    ok.then(|| v.to_string())
+}
+
 /// `prisma migrate deploy` dentro de un contenedor descartable en la red privada de la base. Manual a propósito.
 pub async fn aplicar_migraciones(st: &AppState, solucion_id: &str) -> R<Value> {
     let sol = sol_campos(st, solucion_id).await?;
@@ -409,7 +421,7 @@ pub async fn aplicar_migraciones(st: &AppState, solucion_id: &str) -> R<Value> {
     };
     let nombre = sol["nombre"].as_str().unwrap_or("").to_string();
     let repo = resolver_repo(st, Some(solucion_id)).await?;
-    sh("git", &["fetch", "origin", "main"], Some(&repo), 300).await?;
+    super::repo::git_con_credenciales(st, &["fetch", "origin", "main"], &repo).await?;
     sh("git", &["checkout", "main"], Some(&repo), 300).await?;
     sh("git", &["reset", "--hard", "origin/main"], Some(&repo), 300).await?;
     if !repo.join("prisma").join("schema.prisma").exists() {
@@ -428,7 +440,9 @@ pub async fn aplicar_migraciones(st: &AppState, solucion_id: &str) -> R<Value> {
     if let Some(env) = env_si_existe(&nombre) {
         args.extend(["--env-file".into(), env]);
     }
-    args.extend([imagen, "npx".into(), "prisma".into(), "migrate".into(), "deploy".into()]);
+    // La imagen final no trae el CLI de Prisma: sin fijar la versión, npx baja la más nueva (7.x), que rechaza esquemas de Prisma 5.
+    let paquete = version_prisma(&repo).map(|v| format!("prisma@{v}")).unwrap_or_else(|| "prisma".into());
+    args.extend([imagen, "npx".into(), "--yes".into(), paquete, "migrate".into(), "deploy".into()]);
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     let cola = |t: String| -> String {
         let c: Vec<char> = t.chars().collect();
@@ -437,5 +451,26 @@ pub async fn aplicar_migraciones(st: &AppState, solucion_id: &str) -> R<Value> {
     match sh("docker", &a, None, 180).await {
         Ok(salida) => Ok(json!({ "ok": true, "salida": cola(salida) })),
         Err(e) => Ok(json!({ "ok": false, "salida": cola(e) })),
+    }
+}
+
+#[cfg(test)]
+mod pruebas_prisma {
+    use super::*;
+
+    fn con_paquete(json: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("pv-{}", std::process::id() as u128 * 1000 + json.len() as u128));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("package.json"), json).unwrap();
+        d
+    }
+
+    #[test]
+    fn toma_la_version_que_fija_el_proyecto() {
+        assert_eq!(version_prisma(&con_paquete(r#"{"devDependencies":{"prisma":"5.22.0"}}"#)).as_deref(), Some("5.22.0"));
+        assert_eq!(version_prisma(&con_paquete(r#"{"devDependencies":{"prisma":"^5.10.2"},"dependencies":{"@prisma/client":"^5.10.2"}}"#)).as_deref(), Some("5.10.2"));
+        assert_eq!(version_prisma(&con_paquete(r#"{"dependencies":{"@prisma/client":"~6.1.0"}}"#)).as_deref(), Some("6.1.0"));
+        assert_eq!(version_prisma(&con_paquete(r#"{"dependencies":{"next":"14.2.15"}}"#)), None);
+        assert_eq!(version_prisma(&con_paquete(r#"{"devDependencies":{"prisma":"latest"}}"#)), None);
     }
 }

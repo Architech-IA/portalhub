@@ -56,6 +56,18 @@ pub async fn git(args: &[&str], cwd: &Path) -> R<String> {
     sh("git", args, Some(cwd), 300).await
 }
 
+/// git hacia GitHub con credenciales: el token viaja en una cabecera solo para este comando, nunca en la URL del remoto ni en los
+/// mensajes de error. Los repositorios independientes se clonan sin token en la URL, así que sin esto `push` y `fetch` de un repo privado fallan.
+pub async fn git_con_credenciales(st: &AppState, args: &[&str], cwd: &Path) -> R<String> {
+    use base64::Engine;
+    let Some(token) = st.cfg.github_token.clone().filter(|t| !t.is_empty()) else { return git(args, cwd).await };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{token}"));
+    let cabecera = format!("http.https://github.com/.extraheader=AUTHORIZATION: basic {b64}");
+    let mut a: Vec<&str> = vec!["-c", cabecera.as_str()];
+    a.extend_from_slice(args);
+    git(&a, cwd).await.map_err(|e| e.replace(&b64, "***").replace(&token, "***"))
+}
+
 // ── GitHub ───────────────────────────────────────────────────────────────────────────────────
 async fn github_api(st: &AppState, ruta: &str, metodo: reqwest::Method, cuerpo: Option<Value>) -> Result<reqwest::Response, String> {
     let token = st.cfg.github_token.clone().unwrap_or_default();
@@ -337,7 +349,7 @@ pub async fn descartar_worktree(wt: &Path, raiz: &Path) {
 
 /// Abre (o reutiliza) el PR de la rama de integración del sprint hacia `main`. Nunca mergea sola.
 pub async fn abrir_pr_sprint(st: &AppState, rama: &str, wt_sprint: &Path, titulo: &str, cuerpo: &str, raiz: &Path) -> R<Option<String>> {
-    git(&["push", "-u", "origin", rama, "--force"], wt_sprint).await?;
+    git_con_credenciales(st, &["push", "-u", "origin", rama, "--force"], wt_sprint).await?;
     let remoto = git(&["remote", "get-url", "origin"], raiz).await?.trim().to_string();
     static R: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"github\.com[:/]([^/]+)/([^/.]+)").expect("re"));
     let Some(c) = R.captures(&remoto) else { return Ok(None) };

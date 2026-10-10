@@ -15,10 +15,12 @@ use crate::{
     util::{fetch_json_opt, B},
 };
 
-const MAX_DISENO: usize = 3600;
-const MAX_ITEMS: usize = 25;
+const MAX_DISENO: usize = 8000;
+const MAX_ITEMS: usize = 40;
 /// Marca que el agente escribe en su resumen cuando la tarea le obligó a salirse del diseño.
 pub const MARCA_CAMBIO: &str = "CAMBIO DE DISEÑO:";
+/// Marca que el revisor pone en el motivo de su criterio cuando el diff se aparta del diseño (no depende de que el agente lo declare).
+pub const MARCA_REVISOR: &str = "DESVÍA DEL DISEÑO:";
 /// Primera línea del bloque de diseño en el contexto (sirve para saber si el contexto lo trae).
 pub const ENCABEZADO: &str = "=== DISEÑO TÉCNICO DE LA SOLUCIÓN";
 
@@ -48,7 +50,7 @@ impl Diseno {
     pub fn criterio(&self) -> String {
         let ent = if self.entidades.is_empty() { String::new() } else { format!(" Entidades documentadas: {}.", self.entidades.join(", ")) };
         format!(
-            "El cambio no contradice el diseño técnico documentado (modelo de datos y relaciones, stack, decisiones y arquitectura).{ent} Si la tarea no toca datos ni estructura, este criterio se cumple; si hay duda, cúmplelo salvo contradicción clara. Si el agente se salió del diseño, debe haberlo declarado con «{MARCA_CAMBIO}» en su resumen."
+            "El cambio no contradice el diseño técnico documentado (modelo de datos y relaciones, stack, decisiones y arquitectura).{ent} Si la tarea no toca datos ni estructura, este criterio se cumple; si hay duda, cúmplelo salvo contradicción clara. Aunque la tarea haya pedido el cambio, si el diff introduce entidades, campos, relaciones, tecnologías o decisiones que el diseño no contiene, empieza el campo reason de este criterio con «{MARCA_REVISOR}» y di cuál; si no hay desviación, no uses esa frase. El agente debía además declarar el cambio con «{MARCA_CAMBIO}» en su resumen."
         )
     }
 }
@@ -229,6 +231,7 @@ mod pruebas {
         assert!(d.texto.contains("- Cotización: id, cliente, fecha, total | relaciones: pertenece a Cliente"));
         assert!(d.texto.contains("Una sola base"));
         assert!(d.criterio().contains("Cotización, Cliente (Customer)"));
+        assert!(d.criterio().contains(MARCA_REVISOR) && d.criterio().contains(MARCA_CAMBIO));
         assert!(d.texto.starts_with(ENCABEZADO), "el recordatorio se activa por este encabezado");
         assert!(recordatorio().contains("CAMBIO DE DISEÑO:") && recordatorio().contains("ANTES DE TERMINAR"));
     }
