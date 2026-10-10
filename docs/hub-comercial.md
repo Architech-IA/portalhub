@@ -1,4 +1,4 @@
-# Hub de la solución para proyectos comerciales (MASD-0025)
+# Hub de la solución para proyectos comerciales (MASD-0024-0012)
 
 Revisión completa del hub (`/solutions/pilots/[id]`) y de su servidor, con las fallas de robustez y los huecos para proyectos
 comerciales corregidos. Código: `src/routes/solucion_hub.rs` (nuevo), `gestion.rs`, `soluciones_ia.rs`, `backlog.rs`,
