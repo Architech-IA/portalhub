@@ -187,6 +187,86 @@ const id = () => 'pt' + Math.random().toString(36).slice(2, 12)
     r = await A('DELETE', `/api/soluciones/${s1}?forzar=1`)
     ok(r.status === 200, 'con forzar la elimina')
 
+    console.log('— J: espacio unificado (estado, versiones, comentarios, propuestas)')
+    const s3 = await nueva({ nombre: 'PARITY-TEST Espacio' })
+    const arq0 = JSON.stringify({ nodes: [{ id: 'n1', label: 'Next.js', type: 'backend', x: 16, y: 16 }, { id: 'n2', label: 'PostgreSQL', type: 'database', x: 200, y: 16 }], connections: [{ id: 'c1', from: 'n1', to: 'n2' }] })
+    const crono0 = JSON.stringify([
+      { id: 'a', fase: 'Construcción', fechaInicio: '2026-10-26', fechaFin: '2026-11-30', estado: 'EN_CURSO' },
+      { id: 'b', fase: 'QA', fechaInicio: '2026-11-30', fechaFin: '2026-12-14', estado: 'PENDIENTE', dependeDe: 'a' },
+    ])
+    await q('UPDATE "Solucion" SET arquitectura = $2, cronograma = $3 WHERE id = $1', s3, arq0, crono0)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    ok(r.status === 200 && r.j.length === 7 && r.j.every(a => a.estado === 'BORRADOR'), 'el listado trae las 7 piezas en borrador', r.j)
+    ok(r.j.find(a => a.clave === 'arquitectura').conContenido === true, 'sabe cuáles tienen contenido')
+    ok((await U('PUT', '/api/soluciones/' + s3 + '/artefactos/arquitectura/estado', { estado: 'APROBADO' })).status === 403, 'un usuario normal no aprueba un lienzo (403)')
+    ok((await A('PUT', '/api/soluciones/' + s3 + '/artefactos/arquitectura/estado', { estado: 'INVENTADO' })).status === 400, 'un estado inventado da 400')
+    ok((await A('PUT', '/api/soluciones/' + s3 + '/artefactos/arquitectura/estado', { estado: 'APROBADO' })).status === 200, 'un administrador aprueba el lienzo')
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    ok(r.j.find(a => a.clave === 'arquitectura').estado === 'APROBADO' && r.j.find(a => a.clave === 'arquitectura').aprobacion?.porNombre, 'queda quién lo aprobó', r.j.find(a => a.clave === 'arquitectura'))
+    // editar el lienzo aprobado desde el hub: versión + reapertura
+    const arqEdit = JSON.parse(arq0); arqEdit.nodes[0].label = 'Next.js 14'
+    r = await A('PUT', '/api/soluciones/' + s3, { arquitectura: JSON.stringify(arqEdit), base: { arquitectura: arq0 } })
+    ok(r.status === 200, 'se guarda el lienzo editado', r)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    const m = r.j.find(a => a.clave === 'arquitectura')
+    ok(m.estado === 'EN_REVISION' && m.versiones === 1, 'editar un lienzo aprobado lo devuelve a revisión y guarda la versión anterior', m)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos/arquitectura/versiones')
+    ok(r.status === 200 && r.j.length === 1 && r.j[0].version === 1, 'lista de versiones', r.j)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos/arquitectura/versiones/1')
+    ok(r.status === 200 && JSON.parse(r.j.contenido).nodes[0].label === 'Next.js', 'la versión trae el contenido anterior')
+    ok((await A('GET', '/api/soluciones/' + s3 + '/artefactos/inventado/versiones')).status === 400, 'un artefacto desconocido da 400')
+    // PRD / diseño: el estado vive dentro del documento
+    r = await A('PUT', '/api/soluciones/' + s3 + '/artefactos/disenoTecnico/estado', { estado: 'APROBADO' })
+    const dis3 = JSON.parse(await col(s3, 'disenoTecnico'))
+    ok(r.status === 200 && dis3.estadoDocumento === 'APROBADO' && dis3.aprobacion?.porNombre, 'aprobar un documento escribe estado y aprobación dentro del documento', dis3)
+    // comentarios
+    r = await U('POST', '/api/soluciones/' + s3 + '/artefactos/cronograma/comentarios', { texto: '¿Cuadra con el hito del cliente?' })
+    const com = r.j
+    ok(r.status === 200 && com.resuelto === false && com.autorNombre, 'cualquier usuario comenta', r)
+    ok((await U('POST', '/api/soluciones/' + s3 + '/artefactos/cronograma/comentarios', { texto: '  ' })).status === 400, 'un comentario vacío da 400')
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    ok(r.j.find(a => a.clave === 'cronograma').comentarios === 1, 'el árbol cuenta los comentarios abiertos')
+    ok((await A('PUT', '/api/comentarios-artefacto/' + com.id, { resuelto: true })).status === 200, 'se resuelve')
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    ok(r.j.find(a => a.clave === 'cronograma').comentarios === 0, 'resuelto deja de contar')
+    // propuestas
+    const opsArq = [{ op: 'agregar', ruta: 'nodes', valor: { id: 'q1', label: 'Cola de envíos', type: 'queue' } }, { op: 'agregar', ruta: 'connections', valor: { from: 'n1', to: 'q1' } }]
+    ok((await U('POST', '/api/soluciones/' + s3 + '/propuestas', { clave: 'arquitectura', titulo: 'x', ops: [{ op: 'borrar', ruta: 'nodes' }] })).status === 400, 'una operación inválida se rechaza al crear')
+    ok((await U('POST', '/api/soluciones/' + s3 + '/propuestas', { clave: 'prd', titulo: 'x', ops: opsArq })).status === 400, 'el PRD todavía no admite propuestas')
+    r = await U('POST', '/api/soluciones/' + s3 + '/propuestas', { clave: 'arquitectura', titulo: 'Agregar la cola de envíos', detalle: 'La tarea 003 la necesita', ops: opsArq })
+    const pr = r.j
+    ok(r.status === 200 && pr.estado === 'PENDIENTE' && pr.origen === 'PERSONA', 'una persona propone un cambio', r)
+    const rk = await fetch(BASE + '/api/soluciones/' + s3 + '/propuestas', { method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': process.env.INTERNAL_API_KEY || '' }, body: JSON.stringify({ clave: 'disenoTecnico', titulo: 'La tarea PCRM-1 declaró un cambio de diseño', origen: 'TAREA', tareaId: 't1', ops: [{ op: 'agregar', ruta: 'decisiones', valor: { decision: 'Se usa una cola', alternativas: '', justificacion: 'Tarea PCRM-1' } }] }) })
+    const prd2 = await rk.json().catch(() => ({}))
+    ok(rk.status === 200 && prd2.origen === 'TAREA', 'el motor (clave interna) propone con origen TAREA', { s: rk.status, prd2 })
+    r = await A('GET', '/api/soluciones/' + s3 + '/propuestas?estado=PENDIENTE')
+    ok(r.j.length === 2, 'las propuestas pendientes se listan', r.j.length)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos')
+    ok(r.j.find(a => a.clave === 'arquitectura').propuestas === 1 && r.j.find(a => a.clave === 'disenoTecnico').propuestas === 1, 'el árbol cuenta las propuestas')
+    // el lienzo está en revisión: cualquiera con permiso de usuario puede aceptar; el diseño está aprobado: solo un administrador
+    ok((await U('POST', '/api/propuestas-artefacto/' + prd2.id + '/decidir', { accion: 'aceptar' })).status === 403, 'aceptar un cambio sobre un documento aprobado exige administrador')
+    r = await U('POST', '/api/propuestas-artefacto/' + pr.id + '/decidir', { accion: 'aceptar' })
+    ok(r.status === 200 && r.j.estado === 'ACEPTADA', 'se acepta la propuesta del lienzo', r)
+    const arqFin = JSON.parse(await col(s3, 'arquitectura'))
+    const q1 = arqFin.nodes.find(n => n.id === 'q1')
+    ok(q1 && q1.type === 'queue' && typeof q1.x === 'number' && q1.y === 104 && arqFin.connections.some(c => c.to === 'q1'), 'el componente entra con una posición libre y su conexión', arqFin.nodes)
+    ok((await A('POST', '/api/propuestas-artefacto/' + pr.id + '/decidir', { accion: 'aceptar' })).status === 400, 'una propuesta ya decidida no se decide otra vez')
+    r = await A('POST', '/api/propuestas-artefacto/' + prd2.id + '/decidir', { accion: 'aceptar', nota: 'Ok' })
+    const dis4 = JSON.parse(await col(s3, 'disenoTecnico'))
+    ok(r.status === 200 && dis4.decisiones?.[0]?.decision === 'Se usa una cola' && dis4.estadoDocumento === 'EN_REVISION', 'la decisión entra al diseño y este vuelve a revisión', dis4)
+    r = await A('GET', '/api/soluciones/' + s3 + '/artefactos/disenoTecnico/versiones')
+    ok(r.j.length >= 1, 'aceptar deja la versión anterior del diseño')
+    // cronograma: desplazar en cadena y rechazar
+    r = await A('POST', '/api/soluciones/' + s3 + '/propuestas', { clave: 'cronograma', titulo: 'Cambio de alcance #2: +5 días', ops: [{ op: 'desplazar', dias: 5, desdeId: 'a' }] })
+    const pc = r.j
+    ok(r.status === 200, 'propuesta de desplazar el cronograma', r)
+    ok((await A('POST', '/api/propuestas-artefacto/' + pc.id + '/decidir', { accion: 'aceptar' })).status === 200, 'se acepta')
+    const crono1 = JSON.parse(await col(s3, 'cronograma'))
+    ok(crono1[0].fechaFin === '2026-12-05' && crono1[1].fechaInicio === '2026-12-05' && crono1[1].fechaFin === '2026-12-19', 'la fase y su dependiente se corrieron', crono1)
+    r = await A('POST', '/api/soluciones/' + s3 + '/propuestas', { clave: 'cronograma', titulo: 'Otro', ops: [{ op: 'desplazar', dias: -3 }] })
+    r = await A('POST', '/api/propuestas-artefacto/' + r.j.id + '/decidir', { accion: 'rechazar', nota: 'No procede' })
+    ok(r.status === 200 && r.j.estado === 'RECHAZADA' && JSON.parse(await col(s3, 'cronograma'))[0].fechaFin === '2026-12-05', 'rechazar no toca el contenido')
+
     if (CON_IA) {
       console.log('— I: IA (PRD en dos llamadas y diagrama)')
       const s2 = await nueva({ nombre: 'PARITY-TEST IA', descripcion: 'CRM a la medida para una constructora: oportunidades, cotizaciones, seguimiento y reportes. Integra WhatsApp.', diseno: JSON.stringify({ entidades: [{ id: 'e', nombre: 'Oportunidad', atributos: 'id, valor, etapa', relaciones: 'Cliente 1-N' }, { id: 'f', nombre: 'Cliente', atributos: 'id, nombre', relaciones: '' }] }) })

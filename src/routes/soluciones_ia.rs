@@ -892,7 +892,10 @@ async fn arquitectura_generar(State(st): State<AppState>, o: Opcional, Path(id):
     // Diagrama actual del lienzo (para conservarlo y completarlo)
     let mut actual = String::new();
     if let Some(a) = sol["arquitectura"].as_str().and_then(|x| serde_json::from_str::<Value>(x).ok()) {
-        let nodes = if a.is_array() { a.as_array().cloned().unwrap_or_default() } else { a["nodes"].as_array().cloned().unwrap_or_default() };
+        let nodes: Vec<Value> = (if a.is_array() { a.as_array().cloned().unwrap_or_default() } else { a["nodes"].as_array().cloned().unwrap_or_default() })
+            .into_iter()
+            .filter(|n| n["type"] != "nota" && n["type"] != "grupo")
+            .collect();
         let conns = a["connections"].as_array().cloned().unwrap_or_default();
         if !nodes.is_empty() {
             let nombre: std::collections::HashMap<String, String> = nodes.iter().map(|n| (n["id"].as_str().unwrap_or("").to_string(), n["label"].as_str().unwrap_or("").to_string())).collect();

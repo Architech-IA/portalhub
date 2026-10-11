@@ -797,13 +797,19 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
             }
             if let Some(pos) = c.resumen.find(super::diseno::MARCA_CAMBIO) {
                 let declarado: String = c.resumen[pos..].lines().next().unwrap_or("").chars().take(300).collect();
-                emitir_traza(st, tarea, Some(exec_id), "info", &format!("el agente declaró un cambio de diseño — conviene actualizar el Diseño técnico del hub: {declarado}")).await;
+                emitir_traza(st, tarea, Some(exec_id), "info", &format!("el agente declaró un cambio de diseño — queda como propuesta en el Diseño técnico del hub: {declarado}")).await;
+                if let Some(sid) = so(&t, "solucionId") {
+                    crate::routes::artefactos::proponer_decision_de_diseno(st, &sid, tarea, so(&t, "taskCode").as_deref(), "TAREA", &declarado).await;
+                }
             }
             let v = verificar(st, so(&t, "id").as_deref().unwrap_or(tarea), &sg(&t, "title"), so(&t, "description").as_deref(), criterio.map(|(_, crit)| vec![crit]).unwrap_or_default(), diseno.as_ref().map(|d| d.criterio()), &c.resumen, chequeo.corrio, &archivos, &cambios).await;
             // El revisor marca por su cuenta si el diff se aparta del diseño documentado (no depende de que el agente lo haya declarado).
             for x in &v.checklist {
                 if let Some(r) = x["reason"].as_str().filter(|r| r.contains(super::diseno::MARCA_REVISOR)) {
-                    emitir_traza(st, tarea, Some(exec_id), "info", &format!("el revisor detectó una desviación del diseño técnico — conviene actualizar el Diseño técnico del hub o revisar el cambio: {}", cortar(r, 300))).await;
+                    if let Some(sid) = so(&t, "solucionId") {
+                        crate::routes::artefactos::proponer_decision_de_diseno(st, &sid, tarea, so(&t, "taskCode").as_deref(), "REVISOR", &cortar(r, 300)).await;
+                    }
+                    emitir_traza(st, tarea, Some(exec_id), "info", &format!("el revisor detectó una desviación del diseño técnico — queda como propuesta en el Diseño técnico del hub: {}", cortar(r, 300))).await;
                 }
             }
             verificado = if v.paso { "DONE".into() } else { "FAILED".into() };

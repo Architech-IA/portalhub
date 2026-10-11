@@ -58,19 +58,19 @@ fn por_defecto(k: &str) -> Option<&'static str> {
     }
 }
 
-fn es_admin(se: &Session) -> bool {
+pub(crate) fn es_admin(se: &Session) -> bool {
     se.is_admin() || se.is_service
 }
 
-async fn ahora(st: &AppState) -> String {
+pub(crate) async fn ahora(st: &AppState) -> String {
     fetch_text_opt(&st.pool, r#"SELECT to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')"#, &[]).await.ok().flatten().unwrap_or_default()
 }
 
-fn uid_s(se: &Session) -> Option<String> {
+pub(crate) fn uid_s(se: &Session) -> Option<String> {
     Some(se.id.clone()).filter(|x| !x.is_empty())
 }
 
-fn nombre_de(se: &Session) -> String {
+pub(crate) fn nombre_de(se: &Session) -> String {
     if !se.name.is_empty() {
         se.name.clone()
     } else if !se.email.is_empty() {
@@ -81,7 +81,7 @@ fn nombre_de(se: &Session) -> String {
 }
 
 // ═══════════════════════════ Comparación de documentos ═══════════════════════════
-fn parse_o_texto(t: &str) -> Value {
+pub(crate) fn parse_o_texto(t: &str) -> Value {
     serde_json::from_str(t).unwrap_or_else(|_| Value::String(t.to_string()))
 }
 
@@ -92,6 +92,17 @@ fn sin_volatiles(clave: &str, v: &mut Value) {
         if CON_APROBACION.contains(&clave) {
             o.remove("aprobacion");
             o.remove("reabierto");
+        }
+        // Mover un componente por el lienzo no es un cambio de contenido: no crea versión ni reabre lo aprobado.
+        if clave == "arquitectura" {
+            if let Some(Value::Array(nodos)) = o.get_mut("nodes") {
+                for n in nodos {
+                    if let Value::Object(no) = n {
+                        no.remove("x");
+                        no.remove("y");
+                    }
+                }
+            }
         }
         if clave == "prd" {
             if let Some(Value::Array(reqs)) = o.get_mut("requisitos") {
@@ -256,6 +267,20 @@ pub async fn solucion_actualizar(State(st): State<AppState>, sesion: Session, Pa
                 &[B::T(id.clone()), B::I(MAX_VERSIONES_PRD)],
             )
             .await;
+        }
+    }
+
+    // 3b. Versión y reapertura de los demás artefactos (arquitectura, cronograma, diagramas, diseño, plan de ejecución y de trabajo)
+    for (k, t) in &nuevos {
+        let Some(nuevo) = t else { continue };
+        if *k == "prd" || !crate::routes::artefactos::CLAVES.contains(k) {
+            continue;
+        }
+        let viejo = texto_actual(k);
+        let vacio = matches!(viejo.trim(), "" | "{}" | "[]");
+        if !vacio && huella(k, nuevo) != huella(k, &viejo) {
+            crate::routes::artefactos::guardar_version(&st, &id, k, &viejo, &format!("Antes de la edición de {} desde el hub", nombre_de(&sesion)), &nombre_de(&sesion)).await;
+            crate::routes::artefactos::reabrir_si_aprobado(&st, &id, k, &nombre_de(&sesion)).await;
         }
     }
 
@@ -770,7 +795,7 @@ async fn economia(State(st): State<AppState>, sesion: Session, Path(id): Path<St
 }
 
 // ═══════════════════════════ Fotografías (línea base, as-built) ═══════════════════════════
-async fn crear_snapshot(st: &AppState, id: &str, etiqueta: &str, tipo: &str, se: &Session) -> Result<Value, sqlx::Error> {
+pub(crate) async fn crear_snapshot(st: &AppState, id: &str, etiqueta: &str, tipo: &str, se: &Session) -> Result<Value, sqlx::Error> {
     let contenido = fetch_json_opt(
         &st.pool,
         r#"SELECT jsonb_build_object(
@@ -997,6 +1022,15 @@ mod tests {
         assert_eq!(huella("prd", a), huella("prd", b));
         let c = r#"{"requisitos":[{"id":"r1","texto":"y","estado":"VERIFICADO"}]}"#;
         assert_ne!(huella("prd", a), huella("prd", c));
+    }
+
+    #[test]
+    fn mover_componentes_no_cuenta_como_cambio() {
+        let a = r#"{"nodes":[{"id":"n1","label":"Next","type":"backend","x":16,"y":16}],"connections":[]}"#;
+        let b = r#"{"nodes":[{"id":"n1","label":"Next","type":"backend","x":300,"y":90}],"connections":[]}"#;
+        let c = r#"{"nodes":[{"id":"n1","label":"Next 14","type":"backend","x":16,"y":16}],"connections":[]}"#;
+        assert_eq!(huella("arquitectura", a), huella("arquitectura", b));
+        assert_ne!(huella("arquitectura", a), huella("arquitectura", c));
     }
 
     #[test]

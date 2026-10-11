@@ -3,6 +3,7 @@ use axum::Router;
 use crate::state::AppState;
 
 pub mod administracion;
+pub mod artefactos;
 pub mod auth;
 pub mod agentes;
 pub mod aichat;
@@ -56,6 +57,7 @@ pub fn router() -> Router<AppState> {
         .merge(triggers::router())
         .merge(soluciones_ia::router())
         .merge(solucion_hub::router())
+        .merge(artefactos::router())
         .merge(ejecutor::router())
         .merge(fases::router())
         .merge(central::router())

@@ -73,7 +73,7 @@ pub fn resumir(diseno: Option<&str>, arquitectura: Option<&str>) -> Option<Disen
     let a: Value = arquitectura.and_then(|t| serde_json::from_str(t).ok()).unwrap_or(Value::Null);
     let lista = |k: &str| d[k].as_array().cloned().unwrap_or_default();
     let (entidades, stack, integ, decis) = (lista("entidades"), lista("stack"), lista("integraciones"), lista("decisiones"));
-    let nodos = a["nodes"].as_array().cloned().unwrap_or_default();
+    let nodos: Vec<Value> = a["nodes"].as_array().cloned().unwrap_or_default().into_iter().filter(|n| n["type"] != "nota" && n["type"] != "grupo").collect();
     let conexiones = a["connections"].as_array().cloned().unwrap_or_default();
     let arq_texto = texto(&d, "arquitectura");
     if entidades.is_empty() && stack.is_empty() && integ.is_empty() && decis.is_empty() && nodos.is_empty() && arq_texto.is_empty() {
