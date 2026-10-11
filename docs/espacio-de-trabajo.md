@@ -52,3 +52,11 @@ decisión técnica en el diseño (`proponer_decision_de_diseno`), sin duplicar p
 - Las propuestas solo existen para arquitectura, diseño y cronograma; el PRD y el plan de ejecución todavía no las admiten.
 - No hay un cuadro «pídele algo a este artefacto»: el panel del agente muestra propuestas y actividad, pero no recibe instrucciones.
 - El lienzo no tiene selección múltiple ni alineación de varios elementos.
+
+## Dentro de Oficina › Proyectos (MASD-0024-0014)
+
+El hub ya no exige salir de Proyectos. `HubSolucion.tsx` (el antiguo `page.tsx`, que ahora es un envoltorio) acepta `embebido`: sin barra lateral ni título
+de página, con la pestaña controlada desde fuera (`tabExterna`/`onTabChange`) y avisos hacia arriba (`onMeta`, `onSucio`). `ProyectosView` muestra una barra
+de artefactos bajo las fases, monta el hub al abrir el primero y lo deja oculto (no desmontado) al volver al chat. El panel lateral tiene «Propuestas».
+Enlaces: `/oficina?view=proyectos&p=<id>&art=<prd|diseno|plan-ejec|arquitectura|…>`; `/solutions/pilots/<id>[?seccion=x]` dentro de Oficina se traduce a eso.
+El hub clásico sigue en `/solutions/pilots/<id>`.
