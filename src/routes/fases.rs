@@ -232,6 +232,11 @@ fn pendientes(def: &Value, guardados: &Value, idx: usize) -> Vec<String> {
 }
 
 /// La vista que consume la pantalla: una entrada por fase con su estado, criterios y actividades.
+/// Roles de sesión de una fase. Salen de la plantilla vigente (las definiciones guardadas antes de que existieran no los traen).
+pub(super) fn roles_de_fase(plantilla: &str, fase: &str) -> Vec<Value> {
+    lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["sesiones"].as_array().cloned()).unwrap_or_default()
+}
+
 fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, acts: &[Value], ctx: &Value) -> Vec<Value> {
     let cur = indice(def, fase_actual).unwrap_or(0);
     lista(def)
@@ -274,6 +279,7 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                 "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "criterios": crit, "cumplida": cumplida },
                 "actividades": { "total": items.len(), "hechas": hechas, "items": items },
                 "recursos": resolver_recursos(f, ctx),
+                "sesiones": roles_de_fase(ctx["plantilla"].as_str().unwrap_or(""), clave),
             })
         })
         .collect()
@@ -1207,5 +1213,21 @@ mod tests {
         assert_eq!(v[2]["actividades"]["hechas"], 1);
         assert_eq!(vista_fases(&BASE, "negociacion", "CERRADO_PERDIDO", &g, &[], &json!({}))[5]["estado"], "CERRADA");
         assert!(vista_fases(&BASE, "entrega_cierre", "COMPLETADO", &g, &[], &json!({})).iter().all(|f| f["estado"] == "HECHA"));
+    }
+
+    #[test]
+    fn cada_fase_de_cada_plantilla_tiene_roles_de_sesion_validos() {
+        for cod in ["PROYECTO_COMPLETO", "INICIATIVA_INTERNA"] {
+            for fase in lista(plantilla_por_codigo(cod)) {
+                let clave = fase["clave"].as_str().unwrap();
+                let roles = roles_de_fase(cod, clave);
+                assert!(!roles.is_empty(), "{cod}/{clave} sin roles de sesión");
+                for r in &roles {
+                    assert!(["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"].contains(&r["tipo"].as_str().unwrap_or("")), "{cod}/{clave}: tipo inválido");
+                    assert!(r["clave"].as_str().is_some() && r["titulo"].as_str().is_some() && r["objetivo"].as_str().is_some(), "{cod}/{clave}: rol incompleto");
+                    assert!(!r["cierre"].as_array().unwrap().is_empty(), "{cod}/{clave}: sin lista de cierre");
+                }
+            }
+        }
     }
 }

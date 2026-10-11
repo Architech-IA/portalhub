@@ -1022,7 +1022,20 @@ fn aviso_sin_repo_inicial() -> String {
     format!("ATENCIÓN — PRIORIDAD ANTES QUE NADA MÁS, es el primer mensaje de esta sesión: {RECORDATORIO_SIN_REPO} Antes de avanzar con cualquier otra cosa, proponele el nombre y preguntale si querés que lo crees vos (o si prefiere cargarlo a mano en el Hub de la Solución, pestaña Código o General). Si en este mismo mensaje la persona ya confirmó un nombre, ya te dio uno propio, o te dice explícitamente que por ahora no hace falta, no insistas más allá de una vez — seguí normalmente. Si el proyecto es puramente de gestión/consultoría sin desarrollo de software, tampoco insistas.")
 }
 
-async fn sistema_para(st: &AppState, tipo: &str, nombre: &str, contexto: &str, sin_repo: bool, primer_mensaje: bool) -> String {
+/// Texto del rol de la sesión (fase, objetivo, resultado esperado y lista de cierre con su estado) para el prompt.
+async fn texto_del_rol(st: &AppState, se: &Value) -> Option<String> {
+    let (fase, rol) = (se["faseClave"].as_str()?, se["rol"].as_str()?);
+    let plantilla = fetch_text_opt(&st.pool, r#"SELECT plantilla FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(se["solucionId"].as_str()?.to_string())]).await.ok().flatten()?;
+    let r = super::fases::roles_de_fase(&plantilla, fase).into_iter().find(|r| r["clave"] == rol)?;
+    let cierre: Vec<String> = se["cierre"].as_array().map(|a| a.iter().map(|c| format!("- [{}] {}", if c["ok"] == true { "x" } else { " " }, c["texto"].as_str().unwrap_or(""))).collect()).unwrap_or_default();
+    let artefactos: Vec<&str> = r["artefactos"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+    Some(format!(
+        "ROL DE ESTA SESIÓN: «{}» (fase {fase}).\nObjetivo: {}\nResultado esperado: {}\nArtefactos que suele tocar: {}.\nLista de cierre (lo que debe quedar hecho):\n{}\nMantén la conversación orientada a este objetivo. Cuando el avance lo permita, di qué puntos de la lista de cierre ya se cumplieron y cuáles faltan, y sugiere a la persona marcarlos o cerrar la sesión.",
+        r["titulo"].as_str().unwrap_or(""), r["objetivo"].as_str().unwrap_or(""), r["resultado"].as_str().unwrap_or(""), artefactos.join(", "), cierre.join("\n")
+    ))
+}
+
+async fn sistema_para(st: &AppState, tipo: &str, rol: Option<&str>, nombre: &str, contexto: &str, sin_repo: bool, primer_mensaje: bool) -> String {
     let mut cabecera = if tipo == "KICKOFF" {
         let guia = fetch_text_opt(&st.pool, r#"SELECT "systemPrompt" FROM "Agent" WHERE slug = 'orion'"#, &[]).await.ok().flatten();
         format!(
@@ -1033,6 +1046,9 @@ async fn sistema_para(st: &AppState, tipo: &str, nombre: &str, contexto: &str, s
     } else {
         format!("{}\n\n{}", base_prompt(nombre), por_tipo(tipo))
     };
+    if let Some(r) = rol {
+        cabecera = format!("{cabecera}\n\n{r}");
+    }
     if sin_repo && tipo != "BITACORA" {
         cabecera = format!("{cabecera}\n\n{}", if primer_mensaje { aviso_sin_repo_inicial() } else { RECORDATORIO_SIN_REPO.to_string() });
     }
@@ -1152,7 +1168,8 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
         let ctx = construir_contexto(&st, &solucion_id, Some(&s), &usuario_id, ultimo_usuario.map(|m| m.contenido.as_str())).await.map_err(|e| e.to_string())?.ok_or("El proyecto ya no existe.")?;
         let primer_mensaje = msgs.len() == 1;
         let sin_repo = ctx.sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true);
-        let mut system = sistema_para(&st, s["tipo"].as_str().unwrap_or("LIBRE"), ctx.sol["nombre"].as_str().unwrap_or(""), &ctx.texto, sin_repo, primer_mensaje).await;
+        let rol_txt = texto_del_rol(&st, &s).await;
+        let mut system = sistema_para(&st, s["tipo"].as_str().unwrap_or("LIBRE"), rol_txt.as_deref(), ctx.sol["nombre"].as_str().unwrap_or(""), &ctx.texto, sin_repo, primer_mensaje).await;
         let recortadas: Vec<&str> = ctx.fuentes.iter().filter(|f| f["estado"] == "recortada" || f["estado"] == "omitida").filter_map(|f| f["etiqueta"].as_str()).collect();
         if !recortadas.is_empty() {
             system.push_str(&format!("\n\nATENCIÓN: estas fuentes del contexto están recortadas u omitidas: {}. Si la pregunta puede depender de ellas, léelas con las herramientas ANTES de responder; no afirmes que un dato no existe sin haberlas revisado.", recortadas.join(", ")));
@@ -1467,7 +1484,7 @@ async fn proyecto_obtener(State(st): State<AppState>, o: Opcional, Path(id): Pat
         &st.pool,
         r#"SELECT jsonb_build_object(
              'sesiones', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', s.id, 'titulo', s.titulo, 'tipo', s.tipo, 'estado', s.estado, 'privada', s.privada, 'creadaPorId', s."creadaPorId",
-                    'creadaPorNombre', s."creadaPorNombre", 'cierreEstado', s."cierreEstado", 'createdAt', s."createdAt", 'updatedAt', s."updatedAt",
+                    'creadaPorNombre', s."creadaPorNombre", 'cierreEstado', s."cierreEstado", 'faseClave', s."faseClave", 'rol', s.rol, 'cierre', s.cierre, 'createdAt', s."createdAt", 'updatedAt', s."updatedAt",
                     'mensajes', (SELECT COUNT(*) FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id), 'mia', s."creadaPorId" = $2) ORDER BY s."updatedAt" DESC)
                   FROM "ProyectoSesion" s WHERE s."solucionId" = $1 AND ($3 OR s.estado <> 'ARCHIVADA') AND (s.privada = false OR s."creadaPorId" = $2)), '[]'::jsonb),
              'memoriaVersion', COALESCE((SELECT version FROM "ProyectoMemoria" WHERE "solucionId" = $1), 0),
@@ -1509,13 +1526,26 @@ async fn sesion_crear(State(st): State<AppState>, o: Opcional, Path(id): Path<St
         return Err(no_encontrado("Proyecto"));
     }
     let body = cuerpo.map(|Json(b)| b).unwrap_or_else(|| json!({}));
-    let tipo = s(&body, "tipo").filter(|t| ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"].contains(&t.as_str())).unwrap_or_else(|| "LIBRE".into());
-    let titulo: String = s(&body, "titulo").map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(|t| t.chars().take(80).collect()).unwrap_or_else(|| "Nueva sesión".into());
+    let mut tipo = s(&body, "tipo").filter(|t| ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"].contains(&t.as_str())).unwrap_or_else(|| "LIBRE".into());
+    // Con un rol de la fase, el rol manda: tipo, título y lista de cierre salen del catálogo de la plantilla.
+    let mut titulo_por_defecto = "Nueva sesión".to_string();
+    let (mut fase_clave, mut rol_clave, mut cierre) = (None::<String>, None::<String>, Value::Array(vec![]));
+    if let Some(rc) = s(&body, "rol") {
+        let fc = s(&body, "fase").ok_or_else(|| ApiError::bad_request("Falta la fase del rol"))?;
+        let plantilla = fetch_text_opt(&st.pool, r#"SELECT plantilla FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await?.ok_or_else(|| ApiError::bad_request("El proyecto no tiene motor de fases"))?;
+        let rol = super::fases::roles_de_fase(&plantilla, &fc).into_iter().find(|r| r["clave"] == rc.as_str()).ok_or_else(|| ApiError::bad_request("Ese rol no existe en esa fase"))?;
+        tipo = rol["tipo"].as_str().filter(|t| ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"].contains(t)).unwrap_or("LIBRE").to_string();
+        titulo_por_defecto = rol["titulo"].as_str().unwrap_or("Nueva sesión").to_string();
+        cierre = Value::Array(rol["cierre"].as_array().map(|a| a.iter().map(|t| json!({ "texto": t, "ok": false })).collect()).unwrap_or_default());
+        fase_clave = Some(fc);
+        rol_clave = Some(rc);
+    }
+    let titulo: String = s(&body, "titulo").map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(|t| t.chars().take(80).collect()).unwrap_or(titulo_por_defecto);
     let privada = crate::util::truthy(&body, "privada");
     let fila = fetch_json(
         &st.pool,
-        r#"WITH ins AS (INSERT INTO "ProyectoSesion" ("solucionId", titulo, tipo, privada, "creadaPorId", "creadaPorNombre") VALUES ($1, $2, $3, $4, $5, $6) RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
-        &[B::T(id), B::T(titulo), B::T(tipo), B::Bo(privada), B::T(u.id), B::T(u.nombre)],
+        r#"WITH ins AS (INSERT INTO "ProyectoSesion" ("solucionId", titulo, tipo, privada, "creadaPorId", "creadaPorNombre", "faseClave", rol, cierre) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
+        &[B::T(id), B::T(titulo), B::T(tipo), B::Bo(privada), B::T(u.id), B::T(u.nombre), B::OT(fase_clave), B::OT(rol_clave), B::T(cierre.to_string())],
     )
     .await?;
     Ok((StatusCode::CREATED, Json(fila)))
@@ -1571,6 +1601,15 @@ async fn sesion_actualizar(State(st): State<AppState>, o: Opcional, Path((id, si
             return Err(ApiError::forbidden("Solo quien creó la sesión puede cambiar su privacidad"));
         }
         up.set("privada", B::Bo(p));
+        hay = true;
+    }
+    if let Some(a) = b.get("cierre").and_then(|v| v.as_array()) {
+        let actual = se["cierre"].as_array().cloned().unwrap_or_default();
+        if a.len() != actual.len() {
+            return Err(ApiError::bad_request("La lista de cierre no coincide con la de la sesión"));
+        }
+        let nuevo: Vec<Value> = actual.iter().zip(a).map(|(c, n)| json!({ "texto": c["texto"], "ok": n.as_bool().unwrap_or(false) })).collect();
+        up.set_expr("cierre", B::T(Value::Array(nuevo).to_string()), "{n}::jsonb");
         hay = true;
     }
     if let Some(a) = b.get("fuentesExcluidas").and_then(|v| v.as_array()) {

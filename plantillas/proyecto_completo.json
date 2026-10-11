@@ -56,6 +56,23 @@
           "etiqueta": "Tareas de la fase",
           "descripcion": "La ficha del cliente y la decisión de seguir o no."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "calificar",
+          "titulo": "Calificar la oportunidad",
+          "tipo": "LIBRE",
+          "objetivo": "Decidir con datos si el lead vale la pena y cuánto esfuerzo merece.",
+          "artefactos": [
+            "prd"
+          ],
+          "resultado": "Una decisión de seguir o no, con el encaje, el tamaño estimado y el siguiente paso.",
+          "cierre": [
+            "Quedó claro el encaje con lo que ArchiTechIA hace",
+            "Hay una estimación gruesa de tamaño",
+            "Se decidió seguir o descartar y se anotó por qué"
+          ]
+        }
       ]
     },
     {
@@ -107,6 +124,22 @@
           "tipo": "REUNIONES",
           "etiqueta": "Reunión de diagnóstico",
           "descripcion": "Agéndala en Reuniones."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "preparar_contacto",
+          "titulo": "Preparar la conversación",
+          "tipo": "LIBRE",
+          "objetivo": "Llegar a la primera conversación con el cliente sabiendo qué preguntar y qué ofrecer.",
+          "artefactos": [
+            "prd"
+          ],
+          "resultado": "Las necesidades iniciales y un plan para la reunión de diagnóstico.",
+          "cierre": [
+            "Se listaron las preguntas clave para el cliente",
+            "Se acordó fecha y asistentes de la reunión de diagnóstico"
+          ]
         }
       ]
     },
@@ -170,6 +203,24 @@
           "tipo": "REUNIONES",
           "etiqueta": "Reunión de diagnóstico",
           "descripcion": "Acta y grabación de la reunión."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "descubrimiento",
+          "titulo": "Descubrimiento",
+          "tipo": "KICKOFF",
+          "objetivo": "Entender el dolor, los objetivos y los requisitos iniciales del cliente.",
+          "artefactos": [
+            "prd",
+            "riesgos"
+          ],
+          "resultado": "Alcance, usuarios y criterios de éxito en el PRD borrador, y los primeros riesgos.",
+          "cierre": [
+            "El PRD tiene resumen, problema, alcance y usuarios",
+            "Hay criterios de éxito medibles",
+            "Se anotaron los riesgos y supuestos principales"
+          ]
         }
       ]
     },
@@ -264,6 +315,24 @@
           "etiqueta": "Sprint del MVP",
           "descripcion": "Ejecución de las tareas del MVP con el Motor."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "definir_demo",
+          "titulo": "Definir la demo o el MVP",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Acordar qué se va a mostrar y cómo, para validar la solución con el cliente.",
+          "artefactos": [
+            "prd",
+            "arquitectura"
+          ],
+          "resultado": "El alcance del MVP o de la demo y un guion de lo que se mostrará.",
+          "cierre": [
+            "Se definió qué entra y qué no en la demo",
+            "Hay un esbozo de arquitectura que la sostiene",
+            "Se acordó cómo se medirá la validación"
+          ]
+        }
       ]
     },
     {
@@ -327,6 +396,25 @@
           "etiqueta": "Lead Hub · Propuesta",
           "descripcion": "Estimación, riesgos y notas."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "armar_propuesta",
+          "titulo": "Armar la propuesta",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Convertir lo acordado en una oferta con alcance, estimación, precio y cronograma.",
+          "artefactos": [
+            "prd",
+            "plan-ejec",
+            "cronograma"
+          ],
+          "resultado": "Estimación de esfuerzo, precio y un cronograma tentativo listos para la propuesta.",
+          "cierre": [
+            "El alcance de la propuesta coincide con el PRD",
+            "Hay estimación de esfuerzo y precio",
+            "Hay un cronograma tentativo con hitos"
+          ]
+        }
       ]
     },
     {
@@ -378,6 +466,24 @@
           "tipo": "LEAD_HUB",
           "etiqueta": "Lead Hub · Negociación",
           "descripcion": "Objeciones, seguimiento y compromisos."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "preparar_negociacion",
+          "titulo": "Preparar la negociación",
+          "tipo": "REVISION",
+          "objetivo": "Anticipar objeciones y ajustes de alcance o precio sin romper la rentabilidad.",
+          "artefactos": [
+            "prd",
+            "cambios",
+            "riesgos"
+          ],
+          "resultado": "Las objeciones previstas, los ajustes aceptables y lo que no se negocia.",
+          "cierre": [
+            "Se listaron las objeciones probables y la respuesta a cada una",
+            "Se definió el margen de ajuste de alcance y precio"
+          ]
         }
       ]
     },
@@ -456,6 +562,25 @@
           "etiqueta": "Adjuntos del proyecto",
           "descripcion": "Alcance base, accesos y documentos del cliente."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "kickoff_ejecucion",
+          "titulo": "Kickoff de ejecución",
+          "tipo": "KICKOFF",
+          "objetivo": "Alinear al equipo y al cliente para empezar: alcance cerrado, hitos, responsables y riesgos.",
+          "artefactos": [
+            "prd",
+            "plan-ejec",
+            "riesgos"
+          ],
+          "resultado": "Equipo y responsables, hitos y riesgos iniciales acordados.",
+          "cierre": [
+            "El alcance cerrado quedó en el PRD",
+            "Hay responsables y canales de comunicación en el plan de ejecución",
+            "Los riesgos iniciales están registrados"
+          ]
+        }
       ]
     },
     {
@@ -529,6 +654,42 @@
           "tipo": "BACKLOG",
           "etiqueta": "Backlog del proyecto",
           "descripcion": "Requisitos del PRD convertidos en tareas."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "diseno_tecnico",
+          "titulo": "Diseño técnico",
+          "tipo": "LIBRE",
+          "objetivo": "Decidir cómo se va a construir: arquitectura, modelo de datos, stack e integraciones.",
+          "artefactos": [
+            "diseno",
+            "arquitectura",
+            "diagramas"
+          ],
+          "resultado": "Diseño técnico y arquitectura coherentes con el PRD.",
+          "cierre": [
+            "La arquitectura cubre todos los requisitos del PRD",
+            "El diseño técnico tiene modelo, stack, integraciones y decisiones",
+            "Las decisiones con riesgo quedaron justificadas"
+          ]
+        },
+        {
+          "clave": "planificacion",
+          "titulo": "Planificación",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Descomponer el trabajo en tareas verificables con orden, dependencias y fechas.",
+          "artefactos": [
+            "plan",
+            "plan-ejec",
+            "cronograma"
+          ],
+          "resultado": "Backlog creado y cronograma con dependencias.",
+          "cierre": [
+            "Cada requisito tiene tareas en el backlog",
+            "El cronograma tiene dependencias e hitos",
+            "Se revisó el plan contra el diseño"
+          ]
         }
       ]
     },
@@ -604,6 +765,26 @@
           "etiqueta": "Diseño técnico",
           "descripcion": "Debe coincidir con el esquema y el código."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "seguimiento",
+          "titulo": "Seguimiento de avance",
+          "tipo": "REVISION",
+          "objetivo": "Revisar el avance real, los desvíos del diseño y los cambios de alcance.",
+          "artefactos": [
+            "plan",
+            "cronograma",
+            "cambios",
+            "diseno"
+          ],
+          "resultado": "Hallazgos priorizados y acciones: desvíos, cambios de alcance y riesgos nuevos.",
+          "cierre": [
+            "Se contrastó el avance del backlog con el cronograma",
+            "Los desvíos del diseño se registraron como propuestas",
+            "Los cambios de alcance se registraron como solicitudes"
+          ]
+        }
       ]
     },
     {
@@ -657,6 +838,25 @@
           "etiqueta": "Informe de pruebas y acta de aceptación",
           "descripcion": "Súbelos como adjuntos del proyecto."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "revision_calidad",
+          "titulo": "Revisión de calidad",
+          "tipo": "REVISION",
+          "objetivo": "Verificar que lo construido cumple los criterios de aceptación.",
+          "artefactos": [
+            "prd",
+            "revision",
+            "cumplimiento"
+          ],
+          "resultado": "Defectos priorizados y estado de cada criterio de aceptación.",
+          "cierre": [
+            "Cada criterio de aceptación tiene un resultado",
+            "Los defectos están priorizados y asignados",
+            "Se decidió si se puede pasar a despliegue"
+          ]
+        }
       ]
     },
     {
@@ -704,6 +904,25 @@
           "tipo": "HUB_DESPLIEGUE",
           "etiqueta": "Producción",
           "descripcion": "Entorno, base de datos y estado del despliegue."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "plan_despliegue",
+          "titulo": "Plan de despliegue",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Preparar la salida a producción con su verificación y su vuelta atrás.",
+          "artefactos": [
+            "plan-ejec",
+            "codigo",
+            "riesgos"
+          ],
+          "resultado": "Checklist de despliegue, plan de vuelta atrás y responsables.",
+          "cierre": [
+            "Hay checklist de despliegue y de verificación posterior",
+            "Hay plan de vuelta atrás",
+            "Se acordó la ventana de despliegue con el cliente"
+          ]
         }
       ]
     },
@@ -767,6 +986,24 @@
           "tipo": "HUB_CODIGO",
           "etiqueta": "Traspaso del repositorio",
           "descripcion": "Repositorio que se entrega al cliente."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "cierre",
+          "titulo": "Cierre y lecciones",
+          "tipo": "REVISION",
+          "objetivo": "Cerrar el proyecto con el cliente y dejar lo aprendido.",
+          "artefactos": [
+            "entrega",
+            "prd"
+          ],
+          "resultado": "Paquete de entrega, aceptación del cliente y lecciones aprendidas.",
+          "cierre": [
+            "El paquete de entrega está completo",
+            "El cliente aceptó formalmente",
+            "Se registraron las lecciones aprendidas"
+          ]
         }
       ]
     }

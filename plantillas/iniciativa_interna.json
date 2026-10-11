@@ -60,6 +60,22 @@
           "etiqueta": "Adjuntos de la iniciativa",
           "descripcion": "Datos, correos o documentos que sustentan el problema."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "definir_problema",
+          "titulo": "Definir el problema",
+          "tipo": "KICKOFF",
+          "objetivo": "Entender el problema o la oportunidad y por qué importa.",
+          "artefactos": [
+            "prd"
+          ],
+          "resultado": "El problema, los usuarios y el resultado esperado en el PRD borrador.",
+          "cierre": [
+            "El problema está descrito con sus usuarios",
+            "Hay un resultado esperado medible"
+          ]
+        }
       ]
     },
     {
@@ -122,6 +138,23 @@
           "tipo": "ADJUNTOS",
           "etiqueta": "Caso de negocio",
           "descripcion": "Súbelo como adjunto del proyecto."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "caso_negocio",
+          "titulo": "Armar el caso de negocio",
+          "tipo": "LIBRE",
+          "objetivo": "Justificar la inversión y ubicar la iniciativa en la prioridad.",
+          "artefactos": [
+            "prd",
+            "cronograma"
+          ],
+          "resultado": "Beneficio esperado, costo estimado y prioridad.",
+          "cierre": [
+            "Hay beneficio y costo estimados",
+            "Se definió la prioridad frente a otras iniciativas"
+          ]
         }
       ]
     },
@@ -202,6 +235,23 @@
           "etiqueta": "Sprint del MVP",
           "descripcion": "Ejecución de las tareas del MVP con el Motor."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "definir_mvp",
+          "titulo": "Definir el MVP",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Acordar la versión mínima para validar la idea.",
+          "artefactos": [
+            "prd",
+            "arquitectura"
+          ],
+          "resultado": "Alcance del MVP y cómo se medirá si funciona.",
+          "cierre": [
+            "Se definió qué entra en el MVP",
+            "Hay una métrica de validación"
+          ]
+        }
       ]
     },
     {
@@ -275,6 +325,40 @@
           "tipo": "BACKLOG",
           "etiqueta": "Backlog del proyecto",
           "descripcion": "Requisitos del PRD convertidos en tareas."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "diseno_tecnico",
+          "titulo": "Diseño técnico",
+          "tipo": "LIBRE",
+          "objetivo": "Decidir cómo se va a construir.",
+          "artefactos": [
+            "diseno",
+            "arquitectura",
+            "diagramas"
+          ],
+          "resultado": "Diseño técnico y arquitectura coherentes con el PRD.",
+          "cierre": [
+            "La arquitectura cubre los requisitos",
+            "Las decisiones con riesgo quedaron justificadas"
+          ]
+        },
+        {
+          "clave": "planificacion",
+          "titulo": "Planificación",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Descomponer el trabajo en tareas con orden y fechas.",
+          "artefactos": [
+            "plan",
+            "plan-ejec",
+            "cronograma"
+          ],
+          "resultado": "Backlog creado y cronograma.",
+          "cierre": [
+            "Cada requisito tiene tareas en el backlog",
+            "El cronograma tiene dependencias"
+          ]
         }
       ]
     },
@@ -350,6 +434,24 @@
           "etiqueta": "Diseño técnico",
           "descripcion": "Debe coincidir con el esquema y el código."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "seguimiento",
+          "titulo": "Seguimiento de avance",
+          "tipo": "REVISION",
+          "objetivo": "Revisar el avance real y los desvíos.",
+          "artefactos": [
+            "plan",
+            "cronograma",
+            "diseno"
+          ],
+          "resultado": "Hallazgos priorizados y acciones.",
+          "cierre": [
+            "Se contrastó el avance con el cronograma",
+            "Los desvíos del diseño quedaron registrados"
+          ]
+        }
       ]
     },
     {
@@ -402,6 +504,23 @@
           "tipo": "ADJUNTOS",
           "etiqueta": "Informe de pruebas y acta de aceptación",
           "descripcion": "Súbelos como adjuntos del proyecto."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "revision_calidad",
+          "titulo": "Revisión de calidad",
+          "tipo": "REVISION",
+          "objetivo": "Verificar que lo construido cumple lo esperado.",
+          "artefactos": [
+            "prd",
+            "revision"
+          ],
+          "resultado": "Defectos priorizados y criterios cumplidos.",
+          "cierre": [
+            "Cada criterio tiene un resultado",
+            "Los defectos están priorizados"
+          ]
         }
       ]
     },
@@ -466,6 +585,23 @@
           "etiqueta": "Guía y comunicación a los usuarios",
           "descripcion": "Súbelas como adjuntos del proyecto."
         }
+      ],
+      "sesiones": [
+        {
+          "clave": "plan_lanzamiento",
+          "titulo": "Plan de lanzamiento",
+          "tipo": "PLANIFICACION",
+          "objetivo": "Preparar el lanzamiento y la adopción por los usuarios.",
+          "artefactos": [
+            "plan-ejec",
+            "entrega"
+          ],
+          "resultado": "Plan de lanzamiento, comunicación y adopción.",
+          "cierre": [
+            "Hay plan de lanzamiento y de vuelta atrás",
+            "Hay plan de comunicación a los usuarios"
+          ]
+        }
       ]
     },
     {
@@ -528,6 +664,23 @@
           "tipo": "HUB_CODIGO",
           "etiqueta": "Repositorio",
           "descripcion": "Código de la solución en operación."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "medicion",
+          "titulo": "Medición y cierre",
+          "tipo": "REVISION",
+          "objetivo": "Medir el resultado y decidir si se sostiene, se ajusta o se cierra.",
+          "artefactos": [
+            "entrega",
+            "prd"
+          ],
+          "resultado": "Resultado medido, decisión y lecciones.",
+          "cierre": [
+            "Se midió el resultado contra lo esperado",
+            "Se registraron las lecciones aprendidas"
+          ]
         }
       ]
     }
