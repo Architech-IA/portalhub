@@ -59,13 +59,19 @@ pub(crate) fn naturaleza_de_tipo(tipo: &str) -> &'static str {
     }
 }
 
+/// La plantilla de fábrica de un código (sin los ajustes del editor).
+pub(super) fn base_de(codigo: &str) -> &'static Value {
+    if codigo == "INICIATIVA_INTERNA" { &INTERNA } else { &BASE }
+}
+
+/// La plantilla VIGENTE de un tipo de solución: la de fábrica con los ajustes del editor superpuestos.
 fn plantilla_de_tipo(tipo: &str) -> &'static Value {
-    if naturaleza_de_tipo(tipo) == "INTERNO" { &INTERNA } else { &BASE }
+    super::plantillas::efectiva(if naturaleza_de_tipo(tipo) == "INTERNO" { super::plantillas::INTERNA } else { super::plantillas::COMERCIAL })
 }
 
 /// Plantilla por el código que guarda cada proyecto al iniciarse (los proyectos viejos sin código usan la comercial).
 fn plantilla_por_codigo(codigo: &str) -> &'static Value {
-    if codigo == "INICIATIVA_INTERNA" { &INTERNA } else { &BASE }
+    super::plantillas::efectiva(codigo)
 }
 
 // ── Plantilla (funciones puras) ─────────────────────────────────────────────────────────────
@@ -86,7 +92,7 @@ fn es_preventa(def: &Value, idx: usize) -> bool {
 }
 
 /// Comprueba que una plantilla es coherente antes de usarla (se corre en las pruebas y al iniciar).
-fn validar_plantilla(def: &Value) -> Result<(), String> {
+pub(super) fn validar_plantilla(def: &Value) -> Result<(), String> {
     let fases = lista(def);
     if fases.is_empty() {
         return Err("la plantilla no tiene fases".into());

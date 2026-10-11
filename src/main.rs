@@ -102,6 +102,8 @@ async fn main() {
         .expect("cliente http");
 
     let state = AppState { pool, cfg: cfg.clone(), http };
+    // Las plantillas de fases con los ajustes del editor (si los hay).
+    routes::plantillas::cargar_efectivas(&state).await;
 
     let app = if modo_motor {
         Router::new().merge(motor::router(state.clone())).layer(DefaultBodyLimit::max(40 * 1024 * 1024)).with_state(state)
