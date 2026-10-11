@@ -76,6 +76,17 @@
             "Hay un resultado esperado medible"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "problema",
+          "titulo": "Problema y resultado esperado en el PRD",
+          "ayuda": "El PRD debe tener contenido.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "prd"
+          }
+        }
       ]
     },
     {
@@ -155,6 +166,16 @@
             "Hay beneficio y costo estimados",
             "Se definió la prioridad frente a otras iniciativas"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "caso_negocio",
+          "titulo": "Caso de negocio y prioridad",
+          "ayuda": "Marca el caso de negocio como listo y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
         }
       ]
     },
@@ -251,6 +272,27 @@
             "Se definió qué entra en el MVP",
             "Hay una métrica de validación"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "mvp_definido",
+          "titulo": "Alcance del MVP en el PRD",
+          "ayuda": "Al menos un requisito en el PRD.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "prd",
+            "min_requisitos": 1
+          }
+        },
+        {
+          "clave": "esbozo_arquitectura",
+          "titulo": "Esbozo de arquitectura del MVP",
+          "ayuda": "Al menos un componente en el diagrama de arquitectura.",
+          "verifica": {
+            "tipo": "arquitectura",
+            "min": 1
+          }
         }
       ]
     },
@@ -360,6 +402,37 @@
             "El cronograma tiene dependencias"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "diseno_aprobado",
+          "titulo": "Diseño técnico aprobado",
+          "ayuda": "El diseño técnico, aprobado en su artefacto.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "diseno",
+            "aprobado": true
+          }
+        },
+        {
+          "clave": "plan_aprobado",
+          "titulo": "Plan de ejecución aprobado",
+          "ayuda": "El plan de ejecución, aprobado en su artefacto.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "plan",
+            "aprobado": true
+          }
+        },
+        {
+          "clave": "backlog_creado",
+          "titulo": "Backlog con tareas creadas",
+          "ayuda": "Al menos una tarea en el backlog del proyecto.",
+          "verifica": {
+            "tipo": "tareas",
+            "min": 1
+          }
+        }
       ]
     },
     {
@@ -452,6 +525,19 @@
             "Los desvíos del diseño quedaron registrados"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "avance",
+          "titulo": "Producto construido: tareas hechas en el backlog",
+          "ayuda": "Al menos una tarea terminada y ninguna fallida.",
+          "verifica": {
+            "tipo": "tareas",
+            "min": 1,
+            "hechas_min": 1,
+            "sin_fallidas": true
+          }
+        }
       ]
     },
     {
@@ -521,6 +607,16 @@
             "Cada criterio tiene un resultado",
             "Los defectos están priorizados"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "informe_pruebas",
+          "titulo": "Informe de pruebas",
+          "ayuda": "Marca el informe como listo y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
         }
       ]
     },
@@ -602,6 +698,16 @@
             "Hay plan de comunicación a los usuarios"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "produccion",
+          "titulo": "Lanzamiento en producción",
+          "ayuda": "El proyecto debe tener su URL de despliegue registrada.",
+          "verifica": {
+            "tipo": "despliegue"
+          }
+        }
       ]
     },
     {
@@ -681,6 +787,24 @@
             "Se midió el resultado contra lo esperado",
             "Se registraron las lecciones aprendidas"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "medicion",
+          "titulo": "Resultado medido contra lo esperado",
+          "ayuda": "Resume o enlaza la medición.",
+          "verifica": {
+            "tipo": "manual"
+          }
+        },
+        {
+          "clave": "lecciones",
+          "titulo": "Lecciones aprendidas",
+          "ayuda": "Resume o enlaza las lecciones aprendidas.",
+          "verifica": {
+            "tipo": "manual"
+          }
         }
       ]
     }

@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/fases", get(obtener))
         .route("/api/proyectos/{id}/fases/iniciar", post(iniciar))
         .route("/api/proyectos/{id}/fases/criterio", post(criterio))
+        .route("/api/proyectos/{id}/fases/entregable", post(entregable))
         .route("/api/proyectos/{id}/fases/avanzar", post(avanzar))
         .route("/api/proyectos/{id}/fases/retroceder", post(retroceder))
         .route("/api/proyectos/{id}/prd/versiones", get(prd_versiones))
@@ -232,6 +233,81 @@ fn pendientes(def: &Value, guardados: &Value, idx: usize) -> Vec<String> {
 }
 
 /// La vista que consume la pantalla: una entrada por fase con su estado, criterios y actividades.
+/// Entregables mínimos para cerrar una fase. Salen de la plantilla vigente: los proyectos en marcha también los tienen.
+pub(super) fn requeridos_de_fase(plantilla: &str, fase: &str) -> Vec<Value> {
+    lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["requeridos"].as_array().cloned()).unwrap_or_default()
+}
+
+/// Evalúa un entregable requerido con lo que el sistema ya sabe (ctx) y lo que una persona marcó a mano (ctx.manuales).
+fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> Value {
+    let v = &r["verifica"];
+    let tipo = v["tipo"].as_str().unwrap_or("manual");
+    let clave = r["clave"].as_str().unwrap_or_default();
+    let mut artefacto: Option<&str> = None;
+    let (ok, detalle): (bool, String) = match tipo {
+        "nota_lead" => {
+            let n = ctx["leadHub"][lead_status]["chars"].as_i64().unwrap_or(0);
+            if n > 0 { (true, "Hay notas de la etapa en el Lead Hub".into()) } else { (false, "Sin notas de esta etapa en el Lead Hub".into()) }
+        }
+        "reunion_lead" => {
+            let n = ctx["reuniones"].as_i64().unwrap_or(0);
+            if n > 0 { (true, format!("{n} reunión(es) registradas en el lead")) } else { (false, "Ninguna reunión registrada en el lead".into()) }
+        }
+        "documento" => {
+            let k = v["clave"].as_str().unwrap_or("prd");
+            artefacto = Some(match k { "diseno" => "diseno", "plan" => "plan-ejec", _ => "prd" });
+            let d = &ctx[k];
+            if let Some(m) = v["min_requisitos"].as_i64() {
+                let n = d["requisitos"].as_i64().unwrap_or(0);
+                (n >= m, format!("{n} requisito(s) en el documento (mínimo {m})"))
+            } else if v["aprobado"] == true {
+                let e = d["estado"].as_str().unwrap_or("BORRADOR");
+                (d["tiene"] == true && e == "APROBADO", if d["tiene"] != true { "Sin contenido todavía".into() } else { format!("Estado: {}", match e { "APROBADO" => "aprobado", "EN_REVISION" => "en revisión", _ => "borrador" }) })
+            } else {
+                (d["tiene"] == true, if d["tiene"] == true { "Tiene contenido".into() } else { "Sin contenido todavía".into() })
+            }
+        }
+        "arquitectura" => {
+            artefacto = Some("arquitectura");
+            let n = ctx["arquitecturaNodos"].as_i64().unwrap_or(0);
+            let m = v["min"].as_i64().unwrap_or(1);
+            (n >= m, format!("{n} componente(s) en el diagrama (mínimo {m})"))
+        }
+        "propuesta" => {
+            let buenos: Vec<&str> = v["estados"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+            let hay = ctx["propuestas"].as_array().map(|a| a.iter().any(|p| p["status"].as_str().map(|s| buenos.contains(&s)).unwrap_or(false))).unwrap_or(false);
+            if hay { (true, "La propuesta del lead está en el estado requerido".into()) } else { (false, format!("La propuesta debe estar: {}", buenos.iter().map(|s| traduccion_propuesta(s)).collect::<Vec<_>>().join(" / ").to_lowercase())) }
+        }
+        "tareas" => {
+            let t = &ctx["tareas"];
+            let (total, hechas, fallidas) = (t["total"].as_i64().unwrap_or(0), t["hechas"].as_i64().unwrap_or(0), t["fallidas"].as_i64().unwrap_or(0));
+            let min = v["min"].as_i64().unwrap_or(1);
+            let hmin = v["hechas_min"].as_i64().unwrap_or(0);
+            let sin_f = v["sin_fallidas"] == true;
+            (total >= min && hechas >= hmin && (!sin_f || fallidas == 0), format!("{hechas} de {total} tareas hechas{}", if fallidas > 0 { format!(", {fallidas} fallida(s)") } else { String::new() }))
+        }
+        "despliegue" => {
+            let url = ctx["deployUrl"].as_str().filter(|u| !u.is_empty());
+            match url { Some(u) => (true, format!("En producción: {u}")), None => (false, "Sin URL de despliegue registrada".into()) }
+        }
+        _ => {
+            let m = &ctx["manuales"][fase][clave];
+            if m["ok"] == true { (true, "Marcado como listo".into()) } else { (false, "Sin marcar".into()) }
+        }
+    };
+    let m = &ctx["manuales"][fase][clave];
+    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue");
+    json!({
+        "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
+        "evidencia": if es_manual { m["evidencia"].clone() } else { Value::Null }, "por": if es_manual { m["por"].clone() } else { Value::Null }, "en": if es_manual { m["en"].clone() } else { Value::Null },
+    })
+}
+
+/// Los entregables requeridos de una fase, evaluados. Sin plantilla en el contexto (vista previa sin iniciar) también se muestran, sin marcas manuales.
+fn requeridos_vista(ctx: &Value, fase: &str, lead_status: &str) -> Vec<Value> {
+    requeridos_de_fase(ctx["plantilla"].as_str().unwrap_or(""), fase).iter().map(|r| evaluar_requerido(r, lead_status, ctx, fase)).collect()
+}
+
 /// Bloque (PREVENTA / EJECUCION…) de una fase según la plantilla vigente.
 pub(super) fn bloque_de_fase(plantilla: &str, fase: &str) -> Option<String> {
     lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["bloque"].as_str().map(String::from))
@@ -257,7 +333,10 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                 "PENDIENTE"
             };
             let crit = criterios_fase(def, criterios, i);
-            let cumplida = crit.iter().all(|c| c["ok"] == true);
+            let req = requeridos_vista(ctx, clave, f["leadStatus"].as_str().unwrap_or_default());
+            let req_ok = req.iter().all(|x| x["ok"] == true);
+            // Con el proyecto iniciado (ctx trae su plantilla) la puerta también exige los entregables.
+            let cumplida = crit.iter().all(|c| c["ok"] == true) && (!ctx["plantilla"].is_string() || req_ok);
             let items: Vec<Value> = f["actividades"]
                 .as_array()
                 .map(|a| {
@@ -281,7 +360,8 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
             json!({
                 "clave": clave, "numero": f["numero"], "bloque": f["bloque"], "nombre": f["nombre"], "objetivo": f["objetivo"],
                 "estado": est, "entregables": f["entregables"],
-                "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "criterios": crit, "cumplida": cumplida },
+                "puerta": { "aprobador": f["puerta"]["aprobador"], "tipo": f["puerta"]["tipo"], "criterios": crit, "cumplida": cumplida, "entregablesOk": req_ok },
+                "requeridos": req,
                 "actividades": { "total": items.len(), "hechas": hechas, "items": items },
                 "recursos": resolver_recursos(f, ctx),
                 "sesiones": roles_de_fase(ctx["plantilla"].as_str().unwrap_or(""), clave),
@@ -421,7 +501,7 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
         "adjuntos": s["adjuntos"], "tareas": s["tareas"],
         "arquitecturaNodos": s["arquitectura"].as_str().and_then(|a| serde_json::from_str::<Value>(a).ok()).and_then(|a| a["nodes"].as_array().map(|n| n.len())).unwrap_or(0),
         "prd": estado_documento(s["prd"].as_str()), "diseno": estado_documento(s["diseno"].as_str()), "plan": estado_documento(s["plan"].as_str()),
-        "leadHub": {}, "propuestas": [],
+        "leadHub": {}, "propuestas": [], "reuniones": 0,
     });
     if let Some(l) = lead_id {
         let filas = fetch_json(
@@ -442,6 +522,7 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
             &[B::T(l.into())],
         )
         .await?;
+        ctx["reuniones"] = json!(fetch_text_opt(&st.pool, r#"SELECT COUNT(*)::text FROM "Activity" WHERE "leadId" = $1 AND type::text = 'MEETING'"#, &[B::T(l.into())]).await?.and_then(|n| n.parse::<i64>().ok()).unwrap_or(0));
     }
     Ok(ctx)
 }
@@ -780,6 +861,7 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
 
     let def = &est["definicion"];
     ctx["plantilla"] = est["plantilla"].clone();
+    ctx["manuales"] = est["entregables"].clone();
     let acts = match fetch_json(
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', fa.fase, 'clave', fa.clave, 'backlogItemId', fa."backlogItemId", 'taskCode', bi."taskCode",
@@ -952,6 +1034,37 @@ async fn criterio(State(st): State<AppState>, se: Session, Path(id): Path<String
     Ok(Json(json!({ "ok": true })))
 }
 
+/// Marca (o desmarca) un entregable manual de la fase actual, con su evidencia (enlace o referencia).
+async fn entregable(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+    let a = exigir_puede(&se)?;
+    let est = cargar_iniciado(&st, &id).await?;
+    exigir_en_curso(&est)?;
+    let actual = est["faseActual"].as_str().unwrap_or_default();
+    if s(&body, "fase").as_deref() != Some(actual) {
+        return Err(ApiError::bad_request("Solo se marcan los entregables de la fase actual"));
+    }
+    let clave = s_no_vacio(&body, "clave").ok_or_else(|| ApiError::bad_request("Falta el entregable"))?;
+    let r = requeridos_de_fase(est["plantilla"].as_str().unwrap_or(""), actual).into_iter().find(|r| r["clave"] == clave.as_str()).ok_or_else(|| ApiError::bad_request("Ese entregable no existe en esta fase"))?;
+    if !matches!(r["verifica"]["tipo"].as_str(), Some("manual")) {
+        return Err(ApiError::bad_request("Este entregable se verifica solo, con lo que hay en el sistema"));
+    }
+    let ok = body["ok"].as_bool().ok_or_else(|| ApiError::bad_request("Falta indicar si está listo"))?;
+    let evidencia = s_no_vacio(&body, "evidencia").map(|e| e.chars().take(500).collect::<String>());
+    if ok && evidencia.is_none() {
+        return Err(ApiError::bad_request("Para marcarlo como listo deja el enlace o la referencia del entregable"));
+    }
+    let mut todos = est["entregables"].clone();
+    if !todos.is_object() {
+        todos = json!({});
+    }
+    if !todos[actual].is_object() {
+        todos[actual] = json!({});
+    }
+    todos[actual][clave.as_str()] = if ok { json!({ "ok": true, "por": a.nombre, "en": ahora(&st).await, "evidencia": evidencia }) } else { json!({ "ok": false, "por": null, "en": null, "evidencia": evidencia }) };
+    exec(&st.pool, r#"UPDATE "ProyectoFase" SET entregables = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id), B::J(todos)]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
     let a = exigir_puede(&se)?;
     let est = cargar_iniciado(&st, &id).await?;
@@ -971,7 +1084,18 @@ async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>
             (false, n) => n.map(String::from),
         }
     };
-    let faltan = pendientes(def, &est["criterios"], idx);
+    let mut faltan = pendientes(def, &est["criterios"], idx);
+    {
+        let lead_id = lead_de(&st, &id).await?;
+        let mut ctx = contexto_recursos(&st, &id, lead_id.as_deref()).await?;
+        ctx["plantilla"] = est["plantilla"].clone();
+        ctx["manuales"] = est["entregables"].clone();
+        let ls = lista(def)[idx]["leadStatus"].as_str().unwrap_or_default().to_string();
+        // En la puerta de resultado, perder la venta no exige entregables (solo ganarla).
+        for r in requeridos_vista(&ctx, actual, &ls).iter().filter(|r| r["ok"] != true) {
+            faltan.push(format!("Entregable: {}", r["titulo"].as_str().unwrap_or_default()));
+        }
+    }
     let revisar = |faltan: &Vec<String>| -> Result<(), ApiError> {
         if forzar || faltan.is_empty() {
             Ok(())
@@ -1234,5 +1358,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cada_fase_exige_al_menos_un_entregable_valido_y_se_evalua() {
+        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "manual"];
+        for cod in ["PROYECTO_COMPLETO", "INICIATIVA_INTERNA"] {
+            for fase in lista(plantilla_por_codigo(cod)) {
+                let clave = fase["clave"].as_str().unwrap();
+                let req = requeridos_de_fase(cod, clave);
+                assert!(!req.is_empty(), "{cod}/{clave} sin entregables requeridos");
+                for r in &req {
+                    assert!(tipos.contains(&r["verifica"]["tipo"].as_str().unwrap_or("")), "{cod}/{clave}: tipo de verificación desconocido");
+                    assert!(r["clave"].as_str().is_some() && r["titulo"].as_str().is_some(), "{cod}/{clave}: entregable incompleto");
+                }
+                // con un contexto vacío ninguno se da por cumplido
+                let v = requeridos_vista(&json!({ "plantilla": cod }), clave, "");
+                assert!(v.iter().all(|x| x["ok"] == false), "{cod}/{clave}: algo se cumple sin datos");
+            }
+        }
+    }
+
+    #[test]
+    fn los_entregables_automaticos_y_manuales_se_evaluan() {
+        let ctx = json!({
+            "plantilla": "PROYECTO_COMPLETO",
+            "leadHub": { "DIAGNOSIS": { "chars": 120 } }, "reuniones": 1, "arquitecturaNodos": 2,
+            "prd": { "tiene": true, "estado": "APROBADO", "requisitos": 3 }, "propuestas": [ { "status": "SENT" } ],
+            "manuales": { "arranque": { "acta_arranque": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } } },
+        });
+        let v = requeridos_vista(&ctx, "diagnostico", "DIAGNOSIS");
+        assert!(v.iter().all(|x| x["ok"] == true), "diagnóstico debería cumplirse: {v:?}");
+        assert!(requeridos_vista(&ctx, "propuesta", "PROPOSAL_SENT").iter().all(|x| x["ok"] == true));
+        assert!(requeridos_vista(&ctx, "negociacion", "NEGOTIATION").iter().any(|x| x["ok"] == false), "ACCEPTED debe exigirse para ganar");
+        let arr = requeridos_vista(&ctx, "arranque", "");
+        assert!(arr.iter().all(|x| x["ok"] == true) && arr.iter().any(|x| x["manual"] == true));
     }
 }

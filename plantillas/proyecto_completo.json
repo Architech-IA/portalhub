@@ -73,6 +73,16 @@
             "Se decidió seguir o descartar y se anotó por qué"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "decision",
+          "titulo": "Decisión de seguir o no, con su tope de esfuerzo",
+          "ayuda": "Anótala en las notas de la etapa Identificación del Lead Hub.",
+          "verifica": {
+            "tipo": "nota_lead"
+          }
+        }
       ]
     },
     {
@@ -140,6 +150,16 @@
             "Se listaron las preguntas clave para el cliente",
             "Se acordó fecha y asistentes de la reunión de diagnóstico"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "reunion_agendada",
+          "titulo": "Reunión de diagnóstico agendada",
+          "ayuda": "Registra la reunión como interacción del lead.",
+          "verifica": {
+            "tipo": "reunion_lead"
+          }
         }
       ]
     },
@@ -221,6 +241,26 @@
             "Hay criterios de éxito medibles",
             "Se anotaron los riesgos y supuestos principales"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "acta",
+          "titulo": "Acta del diagnóstico: dolor y objetivos del cliente",
+          "ayuda": "Notas de la etapa Diagnóstico en el Lead Hub.",
+          "verifica": {
+            "tipo": "nota_lead"
+          }
+        },
+        {
+          "clave": "requisitos",
+          "titulo": "Requisitos iniciales en el PRD",
+          "ayuda": "Al menos un requisito en el PRD.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "prd",
+            "min_requisitos": 1
+          }
         }
       ]
     },
@@ -333,6 +373,25 @@
             "Se acordó cómo se medirá la validación"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "registro_demo",
+          "titulo": "Registro de lo mostrado y de los compromisos",
+          "ayuda": "Notas de la etapa Demo en el Lead Hub.",
+          "verifica": {
+            "tipo": "nota_lead"
+          }
+        },
+        {
+          "clave": "esbozo_arquitectura",
+          "titulo": "Esbozo de arquitectura del MVP",
+          "ayuda": "Al menos un componente en el diagrama de arquitectura.",
+          "verifica": {
+            "tipo": "arquitectura",
+            "min": 1
+          }
+        }
       ]
     },
     {
@@ -415,6 +474,21 @@
             "Hay un cronograma tentativo con hitos"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "propuesta_enviada",
+          "titulo": "Propuesta enviada al cliente",
+          "ayuda": "La propuesta del lead debe estar enviada, en revisión o aceptada.",
+          "verifica": {
+            "tipo": "propuesta",
+            "estados": [
+              "SENT",
+              "UNDER_REVIEW",
+              "ACCEPTED"
+            ]
+          }
+        }
       ]
     },
     {
@@ -484,6 +558,19 @@
             "Se listaron las objeciones probables y la respuesta a cada una",
             "Se definió el margen de ajuste de alcance y precio"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "propuesta_aceptada",
+          "titulo": "Propuesta final aceptada o contrato",
+          "ayuda": "La propuesta del lead debe figurar como aceptada. Solo se exige al ganar.",
+          "verifica": {
+            "tipo": "propuesta",
+            "estados": [
+              "ACCEPTED"
+            ]
+          }
         }
       ]
     },
@@ -580,6 +667,26 @@
             "Hay responsables y canales de comunicación en el plan de ejecución",
             "Los riesgos iniciales están registrados"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "prd_aprobado",
+          "titulo": "PRD completo aprobado",
+          "ayuda": "El PRD del proyecto, aprobado en su artefacto.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "prd",
+            "aprobado": true
+          }
+        },
+        {
+          "clave": "acta_arranque",
+          "titulo": "Acta de arranque",
+          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
         }
       ]
     },
@@ -691,6 +798,37 @@
             "Se revisó el plan contra el diseño"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "diseno_aprobado",
+          "titulo": "Diseño técnico aprobado",
+          "ayuda": "El diseño técnico, aprobado en su artefacto.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "diseno",
+            "aprobado": true
+          }
+        },
+        {
+          "clave": "plan_aprobado",
+          "titulo": "Plan de ejecución aprobado",
+          "ayuda": "El plan de ejecución, aprobado en su artefacto.",
+          "verifica": {
+            "tipo": "documento",
+            "clave": "plan",
+            "aprobado": true
+          }
+        },
+        {
+          "clave": "backlog_creado",
+          "titulo": "Backlog con tareas creadas",
+          "ayuda": "Al menos una tarea en el backlog del proyecto.",
+          "verifica": {
+            "tipo": "tareas",
+            "min": 1
+          }
+        }
       ]
     },
     {
@@ -785,6 +923,19 @@
             "Los cambios de alcance se registraron como solicitudes"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "avance",
+          "titulo": "Producto construido: tareas hechas en el backlog",
+          "ayuda": "Al menos una tarea terminada y ninguna fallida.",
+          "verifica": {
+            "tipo": "tareas",
+            "min": 1,
+            "hechas_min": 1,
+            "sin_fallidas": true
+          }
+        }
       ]
     },
     {
@@ -857,6 +1008,24 @@
             "Se decidió si se puede pasar a despliegue"
           ]
         }
+      ],
+      "requeridos": [
+        {
+          "clave": "informe_pruebas",
+          "titulo": "Informe de pruebas",
+          "ayuda": "Marca el informe como listo y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
+        },
+        {
+          "clave": "acta_aceptacion",
+          "titulo": "Acta de aceptación del cliente",
+          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
+        }
       ]
     },
     {
@@ -923,6 +1092,16 @@
             "Hay plan de vuelta atrás",
             "Se acordó la ventana de despliegue con el cliente"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "produccion",
+          "titulo": "Producción funcionando",
+          "ayuda": "El proyecto debe tener su URL de despliegue registrada.",
+          "verifica": {
+            "tipo": "despliegue"
+          }
         }
       ]
     },
@@ -1004,6 +1183,32 @@
             "El cliente aceptó formalmente",
             "Se registraron las lecciones aprendidas"
           ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "paquete_entrega",
+          "titulo": "Paquete de entrega",
+          "ayuda": "Marca el paquete como entregado y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
+        },
+        {
+          "clave": "acta_cierre",
+          "titulo": "Acta de cierre",
+          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "verifica": {
+            "tipo": "manual"
+          }
+        },
+        {
+          "clave": "lecciones",
+          "titulo": "Lecciones aprendidas",
+          "ayuda": "Resume o enlaza las lecciones aprendidas.",
+          "verifica": {
+            "tipo": "manual"
+          }
         }
       ]
     }
