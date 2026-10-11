@@ -1022,6 +1022,15 @@ fn aviso_sin_repo_inicial() -> String {
     format!("ATENCIÓN — PRIORIDAD ANTES QUE NADA MÁS, es el primer mensaje de esta sesión: {RECORDATORIO_SIN_REPO} Antes de avanzar con cualquier otra cosa, proponele el nombre y preguntale si querés que lo crees vos (o si prefiere cargarlo a mano en el Hub de la Solución, pestaña Código o General). Si en este mismo mensaje la persona ya confirmó un nombre, ya te dio uno propio, o te dice explícitamente que por ahora no hace falta, no insistas más allá de una vez — seguí normalmente. Si el proyecto es puramente de gestión/consultoría sin desarrollo de software, tampoco insistas.")
 }
 
+/// ¿La sesión trabaja en una fase de preventa? (la suya, o la actual del proyecto si no tiene rol). En preventa todavía no hay código: no se exige repositorio.
+async fn en_preventa(st: &AppState, se: &Value) -> bool {
+    let Some(sol) = se["solucionId"].as_str() else { return false };
+    let Some(fila) = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('plantilla', plantilla, 'faseActual', "faseActual") FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(sol.to_string())]).await.ok().flatten() else { return false };
+    let fase = se["faseClave"].as_str().or(fila["faseActual"].as_str()).unwrap_or_default().to_string();
+    let plantilla = fila["plantilla"].as_str().unwrap_or_default();
+    super::fases::bloque_de_fase(plantilla, &fase).as_deref() == Some("PREVENTA")
+}
+
 /// Texto del rol de la sesión (fase, objetivo, resultado esperado y lista de cierre con su estado) para el prompt.
 async fn texto_del_rol(st: &AppState, se: &Value) -> Option<String> {
     let (fase, rol) = (se["faseClave"].as_str()?, se["rol"].as_str()?);
@@ -1167,7 +1176,7 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
 
         let ctx = construir_contexto(&st, &solucion_id, Some(&s), &usuario_id, ultimo_usuario.map(|m| m.contenido.as_str())).await.map_err(|e| e.to_string())?.ok_or("El proyecto ya no existe.")?;
         let primer_mensaje = msgs.len() == 1;
-        let sin_repo = ctx.sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true);
+        let sin_repo = ctx.sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true) && !en_preventa(&st, &s).await;
         let rol_txt = texto_del_rol(&st, &s).await;
         let mut system = sistema_para(&st, s["tipo"].as_str().unwrap_or("LIBRE"), rol_txt.as_deref(), ctx.sol["nombre"].as_str().unwrap_or(""), &ctx.texto, sin_repo, primer_mensaje).await;
         let recortadas: Vec<&str> = ctx.fuentes.iter().filter(|f| f["estado"] == "recortada" || f["estado"] == "omitida").filter_map(|f| f["etiqueta"].as_str()).collect();

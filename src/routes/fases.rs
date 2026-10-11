@@ -232,6 +232,11 @@ fn pendientes(def: &Value, guardados: &Value, idx: usize) -> Vec<String> {
 }
 
 /// La vista que consume la pantalla: una entrada por fase con su estado, criterios y actividades.
+/// Bloque (PREVENTA / EJECUCION…) de una fase según la plantilla vigente.
+pub(super) fn bloque_de_fase(plantilla: &str, fase: &str) -> Option<String> {
+    lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["bloque"].as_str().map(String::from))
+}
+
 /// Roles de sesión de una fase. Salen de la plantilla vigente (las definiciones guardadas antes de que existieran no los traen).
 pub(super) fn roles_de_fase(plantilla: &str, fase: &str) -> Vec<Value> {
     lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["sesiones"].as_array().cloned()).unwrap_or_default()
