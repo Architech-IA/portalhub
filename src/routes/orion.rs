@@ -175,8 +175,8 @@ async fn contexto_de_lead(st: &AppState, empresa: &str) -> Result<Option<String>
                                 FROM (SELECT * FROM "BacklogItem" WHERE "solucionId" = so.id ORDER BY "createdAt" DESC LIMIT 20) b), '[]'::jsonb))
                           FROM "Solucion" so WHERE so."leadId" = l.id),
              'fases', COALESCE((SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content,
-                                'archivos', COALESCE((SELECT jsonb_agg(f.name) FROM "LeadHubFile" f WHERE f."hubId" = h.id), '[]'::jsonb)))
-                        FROM "LeadHub" h WHERE h."leadId" = l.id), '[]'::jsonb))
+                                'archivos', COALESCE((SELECT jsonb_agg(f.name) FROM "ProyectoNotaArchivoLead" f WHERE f."hubId" = h.id), '[]'::jsonb)))
+                        FROM "ProyectoNotaLead" h WHERE h."leadId" = l.id), '[]'::jsonb))
            FROM "Lead" l WHERE l.id = $1"#,
         &[B::T(lead_id)],
     )

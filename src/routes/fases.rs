@@ -252,8 +252,9 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
     let mut artefacto: Option<&str> = None;
     let (ok, detalle): (bool, String) = match tipo {
         "nota_lead" => {
-            let n = ctx["leadHub"][lead_status]["chars"].as_i64().unwrap_or(0);
-            if n > 0 { (true, "Hay notas de la etapa en el Lead Hub".into()) } else { (false, "Sin notas de esta etapa en el Lead Hub".into()) }
+            let _ = lead_status;
+            let n = ctx["notas"][fase]["chars"].as_i64().unwrap_or(0);
+            if n > 0 { (true, "Hay notas de la fase en el proyecto".into()) } else { (false, "Sin notas de esta fase en el proyecto".into()) }
         }
         "reunion_lead" => {
             let n = ctx["reuniones"].as_i64().unwrap_or(0);
@@ -440,15 +441,13 @@ fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
         .map(|r| {
             let tipo = r["tipo"].as_str().unwrap_or_default();
             let (estado, nivel, href, panel): (String, &str, Option<String>, Option<&str>) = match tipo {
-                "LEAD_HUB" => match lead {
-                    None => ("Sin lead".into(), "vacio", None, None),
-                    Some(l) => {
-                        let h = &ctx["leadHub"][fase["leadStatus"].as_str().unwrap_or_default()];
-                        let (chars, arch) = (h["chars"].as_i64().unwrap_or(0), h["archivos"].as_i64().unwrap_or(0));
-                        let archivos = if arch > 0 { format!(" y {arch} archivo{}", if arch == 1 { "" } else { "s" }) } else { String::new() };
-                        if chars > 0 { (format!("Nota con contenido{archivos}"), "ok", Some(format!("/leads/{l}/hub")), None) } else if arch > 0 { (format!("Sin nota, con {arch} archivo(s)"), "medio", Some(format!("/leads/{l}/hub")), None) } else { ("Sin notas todavía".into(), "vacio", Some(format!("/leads/{l}/hub")), None) }
-                    }
-                },
+                // Antes era el Lead Hub; ahora son las notas y archivos de la fase dentro del proyecto.
+                "LEAD_HUB" => {
+                    let h = &ctx["notas"][fase["clave"].as_str().unwrap_or_default()];
+                    let (chars, arch) = (h["chars"].as_i64().unwrap_or(0), h["archivos"].as_i64().unwrap_or(0));
+                    let archivos = if arch > 0 { format!(" y {arch} archivo{}", if arch == 1 { "" } else { "s" }) } else { String::new() };
+                    if chars > 0 { (format!("Notas con contenido{archivos}"), "ok", None, None) } else if arch > 0 { (format!("Sin notas, con {arch} archivo(s)"), "medio", None, None) } else { ("Sin notas todavía".into(), "vacio", None, None) }
+                }
                 "PROPUESTAS" => match ctx["propuestas"].as_array().filter(|a| !a.is_empty()) {
                     None => ("Sin propuestas".into(), "vacio", None, None),
                     Some(a) => {
@@ -498,7 +497,7 @@ fn resolver_recursos(fase: &Value, ctx: &Value) -> Vec<Value> {
                 }
                 _ => ("".into(), "vacio", None, None),
             };
-            json!({ "tipo": tipo, "etiqueta": r["etiqueta"], "descripcion": r["descripcion"], "estado": estado, "nivel": nivel, "href": href, "panel": panel })
+            json!({ "tipo": tipo, "etiqueta": if tipo == "LEAD_HUB" { json!("Notas de la fase") } else { r["etiqueta"].clone() }, "descripcion": if tipo == "LEAD_HUB" { json!("Lo escrito y los archivos de esta fase, dentro del proyecto.") } else { r["descripcion"].clone() }, "estado": estado, "nivel": nivel, "href": href, "panel": panel })
         })
         .collect()
 }
@@ -521,13 +520,23 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
         "adjuntos": s["adjuntos"], "tareas": s["tareas"],
         "arquitecturaNodos": s["arquitectura"].as_str().and_then(|a| serde_json::from_str::<Value>(a).ok()).and_then(|a| a["nodes"].as_array().map(|n| n.len())).unwrap_or(0),
         "prd": estado_documento(s["prd"].as_str()), "diseno": estado_documento(s["diseno"].as_str()), "plan": estado_documento(s["plan"].as_str()),
-        "leadHub": {}, "propuestas": [], "reuniones": 0,
+        "leadHub": {}, "notas": {}, "propuestas": [], "reuniones": 0,
     });
+    let notas = fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', n.fase, 'content', n.contenido, 'archivos', (SELECT COUNT(*) FROM "ProyectoNotaArchivo" a WHERE a."notaId" = n.id))), '[]'::jsonb) FROM "ProyectoNota" n WHERE n."solucionId" = $1"#,
+        &[B::T(sol.into())],
+    )
+    .await?;
+    for n in notas.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        let chars = crate::routes::aichat::texto_fase(n["content"].as_str().unwrap_or("")).trim().chars().count();
+        ctx["notas"][n["fase"].as_str().unwrap_or_default()] = json!({ "chars": chars, "archivos": n["archivos"] });
+    }
     if let Some(l) = lead_id {
         let filas = fetch_json(
             &st.pool,
-            r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content, 'archivos', (SELECT COUNT(*) FROM "LeadHubFile" f WHERE f."hubId" = h.id))), '[]'::jsonb)
-                 FROM "LeadHub" h WHERE h."leadId" = $1"#,
+            r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content, 'archivos', (SELECT COUNT(*) FROM "ProyectoNotaArchivoLead" f WHERE f."hubId" = h.id))), '[]'::jsonb)
+                 FROM "ProyectoNotaLead" h WHERE h."leadId" = $1"#,
             &[B::T(l.into())],
         )
         .await?;
@@ -1308,12 +1317,12 @@ mod tests {
             "tareas": { "total": 4, "hechas": 4, "enCurso": 0, "fallidas": 0 },
             "prd": estado_documento(Some(r#"{"estadoDocumento":"APROBADO","resumenEjecutivo":"x","requisitos":[{"backlogItemId":"a"},{"backlogItemId":""}]}"#)),
             "diseno": estado_documento(Some("{}")), "plan": estado_documento(None),
-            "leadHub": { "NEW": { "chars": 120, "archivos": 1 } }, "arquitecturaNodos": 3,
+            "notas": { "identificacion": { "chars": 120, "archivos": 1 } }, "arquitecturaNodos": 3,
             "propuestas": [{ "id": "P9", "status": "SENT" }],
         });
         let f = |c: &str| lista(&BASE)[indice(&BASE, c).unwrap()].clone();
         let r = resolver_recursos(&f("identificacion"), &ctx);
-        assert_eq!(r[0]["href"], "/leads/L1/hub");
+        assert!(r[0]["href"].is_null(), "las notas viven en la propia fase");
         assert_eq!(r[0]["nivel"], "ok");
         assert!(r[0]["estado"].as_str().unwrap().contains("1 archivo"));
         let contacto = resolver_recursos(&f("contacto"), &ctx);
@@ -1336,7 +1345,7 @@ mod tests {
         assert!(f("demo")["actividades"].as_array().unwrap().iter().any(|a| a["clave"] == "esbozo_arquitectura"));
         assert!(f("construccion")["actividades"].as_array().unwrap().iter().any(|a| a["clave"] == "actualizar_diseno"));
         let sin_lead = resolver_recursos(&f("identificacion"), &json!({ "solucionId": "S1", "leadId": null }));
-        assert_eq!(sin_lead[0]["estado"], "Sin lead");
+        assert_eq!(sin_lead[0]["estado"], "Sin notas todavía", "las notas son del proyecto: no dependen del lead");
         assert!(estado_documento(Some("{}"))["tiene"] == false && estado_documento(Some("no es json"))["tiene"] == false);
     }
 
@@ -1404,7 +1413,7 @@ mod tests {
     fn los_entregables_automaticos_y_manuales_se_evaluan() {
         let ctx = json!({
             "plantilla": "PROYECTO_COMPLETO",
-            "leadHub": { "DIAGNOSIS": { "chars": 120 } }, "reuniones": 1, "arquitecturaNodos": 2,
+            "notas": { "diagnostico": { "chars": 120 }, "demo": { "chars": 40 } }, "reuniones": 1, "arquitecturaNodos": 2,
             "prd": { "tiene": true, "estado": "APROBADO", "requisitos": 3 }, "propuestas": [ { "status": "SENT" } ],
             "manuales": { "arranque": { "acta_arranque": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } } },
         });

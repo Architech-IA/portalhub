@@ -96,7 +96,7 @@
         {
           "clave": "decision",
           "titulo": "Decisión de seguir o no, con su tope de esfuerzo",
-          "ayuda": "Anótala en las notas de la etapa Identificación del Lead Hub.",
+          "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
           "verifica": {
             "tipo": "nota_lead"
           },
@@ -267,7 +267,7 @@
         {
           "clave": "acta",
           "titulo": "Acta del diagnóstico: dolor y objetivos del cliente",
-          "ayuda": "Notas de la etapa Diagnóstico en el Lead Hub.",
+          "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
           "verifica": {
             "tipo": "nota_lead"
           },
@@ -400,7 +400,7 @@
         {
           "clave": "registro_demo",
           "titulo": "Registro de lo mostrado y de los compromisos",
-          "ayuda": "Notas de la etapa Demo en el Lead Hub.",
+          "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
           "verifica": {
             "tipo": "nota_lead"
           },

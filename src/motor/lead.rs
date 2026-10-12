@@ -84,7 +84,7 @@ pub async fn cargar(st: &AppState, solucion: &str) -> Option<String> {
         r#"SELECT jsonb_build_object(
              'empresa', l."companyName", 'contacto', l."contactName", 'email', l.email, 'telefono', l.phone, 'estado', l.status::text, 'resultado', l.outcome,
              'valor', l."estimatedValue", 'alcance', l.scope, 'notas', l.notes, 'origen', l.source, 'fase', pf."faseActual",
-             'hub', (SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content)) FROM "LeadHub" h WHERE h."leadId" = l.id),
+             'hub', (SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content)) FROM "ProyectoNotaLead" h WHERE h."leadId" = l.id),
              'propuestas', (SELECT jsonb_agg(jsonb_build_object('title', p.title, 'status', p.status::text, 'amount', p.amount, 'description', p.description) ORDER BY p."updatedAt" DESC)
                               FROM "Proposal" p WHERE p."leadId" = l.id))
              FROM "Solucion" s JOIN "Lead" l ON l.id = s."leadId" LEFT JOIN "ProyectoFase" pf ON pf."solucionId" = s.id WHERE s.id = $1"#,

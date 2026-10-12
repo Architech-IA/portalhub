@@ -477,7 +477,7 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
             let d = fetch_json_opt(
                 &st.pool,
                 r#"SELECT jsonb_build_object('lead', to_jsonb(l), 'cliente', (SELECT cl.nombre FROM "Cliente" cl WHERE cl.id = l."clienteId"),
-                     'fases', COALESCE((SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content) ORDER BY h."createdAt") FROM "LeadHub" h WHERE h."leadId" = l.id), '[]'::jsonb))
+                     'fases', COALESCE((SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content) ORDER BY h."createdAt") FROM "ProyectoNotaLead" h WHERE h."leadId" = l.id), '[]'::jsonb))
                    FROM "Lead" l WHERE l.id = $1"#,
                 &[B::T(lead_id.into())],
             )

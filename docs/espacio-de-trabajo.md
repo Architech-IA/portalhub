@@ -60,3 +60,10 @@ de página, con la pestaña controlada desde fuera (`tabExterna`/`onTabChange`) 
 de artefactos bajo las fases, monta el hub al abrir el primero y lo deja oculto (no desmontado) al volver al chat. El panel lateral tiene «Propuestas».
 Enlaces: `/oficina?view=proyectos&p=<id>&art=<prd|diseno|plan-ejec|arquitectura|…>`; `/solutions/pilots/<id>[?seccion=x]` dentro de Oficina se traduce a eso.
 El hub clásico sigue en `/solutions/pilots/<id>`.
+
+## Notas por fase dentro del proyecto (adiós al Lead Hub)
+
+Las notas y los archivos de cada fase se guardan en el proyecto (`ProyectoNota`, `ProyectoNotaArchivo`, migración 008; API `/api/proyectos/{id}/notas` y `archivos-nota`). Las vistas
+`ProyectoNotaLead` y `ProyectoNotaArchivoLead` les dan a los lectores que antes leían `LeadHub` (IA, contexto de la propuesta, entregables) la misma forma por lead y etapa.
+La verificación `nota_lead` mira las notas de la fase en el proyecto y sirve en cualquier fase. El diagrama del lead pasó a ser la arquitectura del proyecto (si estaba vacía).
+Las tablas `LeadHub` y `LeadHubFile` quedaron vacías (respaldo en /root/respaldos); el Lead Hub conserva interacciones y propuesta.

@@ -148,7 +148,7 @@ async fn base_contexto(st: &AppState, id: &str) -> Result<Option<BaseContexto>, 
              'riesgos', COALESCE((SELECT jsonb_agg(to_jsonb(r)) FROM "Riesgo" r WHERE r."solucionId" = so.id), '[]'::jsonb),
              'hitos', COALESCE((SELECT jsonb_agg(to_jsonb(h)) FROM "Hito" h WHERE h."solucionId" = so.id), '[]'::jsonb),
              'lead', (SELECT to_jsonb(l) FROM "Lead" l WHERE l.id = so."leadId"),
-             'hub', COALESCE((SELECT jsonb_agg(h.content ORDER BY h.phase ASC) FROM "LeadHub" h WHERE h."leadId" = so."leadId"), '[]'::jsonb))
+             'hub', COALESCE((SELECT jsonb_agg(h.content ORDER BY h.phase ASC) FROM "ProyectoNotaLead" h WHERE h."leadId" = so."leadId"), '[]'::jsonb))
            FROM "Solucion" so WHERE so.id = $1"#,
         &[B::T(id.into())],
     )
@@ -925,8 +925,8 @@ async fn arquitectura_generar(State(st): State<AppState>, o: Opcional, Path(id):
                  'activities', COALESCE((SELECT jsonb_agg(jsonb_build_object('type', a.type::text, 'description', a.description) ORDER BY a."createdAt" DESC)
                     FROM (SELECT * FROM "Activity" WHERE "leadId" = l.id ORDER BY "createdAt" DESC LIMIT 25) a), '[]'::jsonb),
                  'fases', COALESCE((SELECT jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content,
-                      'files', COALESCE((SELECT jsonb_agg(jsonb_build_object('name', f.name)) FROM "LeadHubFile" f WHERE f."hubId" = h.id), '[]'::jsonb)) ORDER BY h."createdAt" ASC)
-                    FROM "LeadHub" h WHERE h."leadId" = l.id), '[]'::jsonb))
+                      'files', COALESCE((SELECT jsonb_agg(jsonb_build_object('name', f.name)) FROM "ProyectoNotaArchivoLead" f WHERE f."hubId" = h.id), '[]'::jsonb)) ORDER BY h."createdAt" ASC)
+                    FROM "ProyectoNotaLead" h WHERE h."leadId" = l.id), '[]'::jsonb))
                FROM "Lead" l WHERE l.id = $1"#,
             &[B::T(lead_id)],
         )

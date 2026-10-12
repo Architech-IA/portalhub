@@ -170,7 +170,8 @@ fn limpiar_verificacion(v: &Value, con_lead: bool, comercial: bool, donde: &str)
         return Err(format!("{donde}: tipo de verificación desconocido"));
     }
     match tipo {
-        "nota_lead" | "reunion_lead" => {
+        "nota_lead" => Ok(json!({ "tipo": tipo })),
+        "reunion_lead" => {
             if !con_lead || !comercial {
                 return Err(format!("{donde}: «{tipo}» solo aplica a las fases de preventa del proyecto comercial"));
             }
@@ -581,7 +582,7 @@ mod tests {
         assert!(mal(json!({ "diagnostico": { "requeridos": [] } })));
         assert!(mal(json!({ "diagnostico": { "requeridos": [{ "clave": "x", "titulo": "Algo", "verifica": { "tipo": "manual" } }] } })), "clave muy corta");
         assert!(mal(json!({ "diagnostico": { "requeridos": [{ "clave": "algo", "titulo": "Algo", "verifica": { "tipo": "inventado" } }] } })));
-        assert!(mal(json!({ "arranque": { "requeridos": [{ "clave": "nota", "titulo": "Notas del lead", "verifica": { "tipo": "nota_lead" } }] } })), "nota_lead solo en preventa");
+        assert!(mal(json!({ "arranque": { "requeridos": [{ "clave": "nota", "titulo": "Reunión del lead", "verifica": { "tipo": "reunion_lead" } }] } })), "reunion_lead solo en preventa");
         assert!(mal(json!({ "contacto": { "requeridos": [{ "clave": "algo", "titulo": "Algo", "formato": "docx", "verifica": { "tipo": "manual" } }] } })), "formato manual desconocido");
         assert!(validar_ajustes(INTERNA, &json!({ "idea": { "requeridos": [{ "clave": "prop", "titulo": "Propuesta enviada", "verifica": { "tipo": "propuesta", "estados": ["SENT"] } }] } })).is_err());
     }

@@ -122,8 +122,8 @@ async fn contexto_lead(st: &AppState, lead_id: &str, fase_activa: &str) -> Resul
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('phase', h.phase, 'content', h.content,
              'files', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'size', f.size) ORDER BY f.ctid)
-                                FROM "LeadHubFile" f WHERE f."hubId" = h.id), '[]'::jsonb)) ORDER BY h."createdAt" ASC), '[]'::jsonb)
-           FROM "LeadHub" h WHERE h."leadId" = $1"#,
+                                FROM "ProyectoNotaArchivoLead" f WHERE f."hubId" = h.id), '[]'::jsonb)) ORDER BY h."createdAt" ASC), '[]'::jsonb)
+           FROM "ProyectoNotaLead" h WHERE h."leadId" = $1"#,
         &[B::T(lead_id.to_string())],
     )
     .await?;
@@ -268,7 +268,7 @@ async fn contexto_lead(st: &AppState, lead_id: &str, fase_activa: &str) -> Resul
             Some(t) => t,
             None => {
                 let b64 = match c.origen.0 {
-                    "hub" => fetch_text_opt(&st.pool, r#"SELECT base64 FROM "LeadHubFile" WHERE id = $1"#, &[B::T(c.origen.1.clone())]).await?,
+                    "hub" => fetch_text_opt(&st.pool, r#"SELECT base64 FROM "ProyectoNotaArchivo" WHERE id = $1"#, &[B::T(c.origen.1.clone())]).await?,
                     _ => fetch_text_opt(
                         &st.pool,
                         r#"SELECT COALESCE(NULLIF(base64, ''), CASE WHEN url LIKE 'data:%' THEN url END)
