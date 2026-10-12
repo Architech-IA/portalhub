@@ -85,7 +85,8 @@
           "verifica": {
             "tipo": "documento",
             "clave": "prd"
-          }
+          },
+          "formato": "portal"
         }
       ]
     },
@@ -172,10 +173,11 @@
         {
           "clave": "caso_negocio",
           "titulo": "Caso de negocio y prioridad",
-          "ayuda": "Marca el caso de negocio como listo y deja el enlace o la referencia.",
+          "ayuda": "Marca el caso de negocio como listo y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "texto"
         }
       ]
     },
@@ -283,7 +285,8 @@
             "tipo": "documento",
             "clave": "prd",
             "min_requisitos": 1
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "esbozo_arquitectura",
@@ -292,7 +295,8 @@
           "verifica": {
             "tipo": "arquitectura",
             "min": 1
-          }
+          },
+          "formato": "diagrama"
         }
       ]
     },
@@ -412,7 +416,8 @@
             "tipo": "documento",
             "clave": "diseno",
             "aprobado": true
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "plan_aprobado",
@@ -422,7 +427,8 @@
             "tipo": "documento",
             "clave": "plan",
             "aprobado": true
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "backlog_creado",
@@ -431,7 +437,8 @@
           "verifica": {
             "tipo": "tareas",
             "min": 1
-          }
+          },
+          "formato": "backlog"
         }
       ]
     },
@@ -536,7 +543,8 @@
             "min": 1,
             "hechas_min": 1,
             "sin_fallidas": true
-          }
+          },
+          "formato": "backlog"
         }
       ]
     },
@@ -613,10 +621,11 @@
         {
           "clave": "informe_pruebas",
           "titulo": "Informe de pruebas",
-          "ayuda": "Marca el informe como listo y deja el enlace o la referencia.",
+          "ayuda": "Marca el informe como listo y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "pdf"
         }
       ]
     },
@@ -706,7 +715,8 @@
           "ayuda": "El proyecto debe tener su URL de despliegue registrada.",
           "verifica": {
             "tipo": "despliegue"
-          }
+          },
+          "formato": "url"
         }
       ]
     },
@@ -793,18 +803,20 @@
         {
           "clave": "medicion",
           "titulo": "Resultado medido contra lo esperado",
-          "ayuda": "Resume o enlaza la medición.",
+          "ayuda": "Enlaza la medición.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "hoja"
         },
         {
           "clave": "lecciones",
           "titulo": "Lecciones aprendidas",
-          "ayuda": "Resume o enlaza las lecciones aprendidas.",
+          "ayuda": "Enlaza las lecciones aprendidas.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "texto"
         }
       ]
     }

@@ -304,7 +304,7 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
     let m = &ctx["manuales"][fase][clave];
     let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue");
     json!({
-        "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
+        "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "formato": r["formato"].as_str().unwrap_or_else(|| super::plantillas::formato_automatico(tipo)), "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
         "evidencia": if es_manual { m["evidencia"].clone() } else { Value::Null }, "por": if es_manual { m["por"].clone() } else { Value::Null }, "en": if es_manual { m["en"].clone() } else { Value::Null },
     })
 }
@@ -1056,8 +1056,8 @@ async fn entregable(State(st): State<AppState>, se: Session, Path(id): Path<Stri
     }
     let ok = body["ok"].as_bool().ok_or_else(|| ApiError::bad_request("Falta indicar si está listo"))?;
     let evidencia = s_no_vacio(&body, "evidencia").map(|e| e.chars().take(500).collect::<String>());
-    if ok && evidencia.is_none() {
-        return Err(ApiError::bad_request("Para marcarlo como listo deja el enlace o la referencia del entregable"));
+    if ok && !evidencia.as_deref().map(|e| e.starts_with("http://") || e.starts_with("https://")).unwrap_or(false) {
+        return Err(ApiError::bad_request("Para marcarlo como listo deja el enlace (http:// o https://) al entregable en su formato esperado"));
     }
     let mut todos = est["entregables"].clone();
     if !todos.is_object() {

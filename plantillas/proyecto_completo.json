@@ -81,7 +81,8 @@
           "ayuda": "Anótala en las notas de la etapa Identificación del Lead Hub.",
           "verifica": {
             "tipo": "nota_lead"
-          }
+          },
+          "formato": "nota"
         }
       ]
     },
@@ -159,7 +160,8 @@
           "ayuda": "Registra la reunión como interacción del lead.",
           "verifica": {
             "tipo": "reunion_lead"
-          }
+          },
+          "formato": "registro"
         }
       ]
     },
@@ -250,7 +252,8 @@
           "ayuda": "Notas de la etapa Diagnóstico en el Lead Hub.",
           "verifica": {
             "tipo": "nota_lead"
-          }
+          },
+          "formato": "nota"
         },
         {
           "clave": "requisitos",
@@ -260,7 +263,8 @@
             "tipo": "documento",
             "clave": "prd",
             "min_requisitos": 1
-          }
+          },
+          "formato": "portal"
         }
       ]
     },
@@ -381,7 +385,8 @@
           "ayuda": "Notas de la etapa Demo en el Lead Hub.",
           "verifica": {
             "tipo": "nota_lead"
-          }
+          },
+          "formato": "nota"
         },
         {
           "clave": "esbozo_arquitectura",
@@ -390,7 +395,8 @@
           "verifica": {
             "tipo": "arquitectura",
             "min": 1
-          }
+          },
+          "formato": "diagrama"
         }
       ]
     },
@@ -487,7 +493,8 @@
               "UNDER_REVIEW",
               "ACCEPTED"
             ]
-          }
+          },
+          "formato": "propuesta"
         }
       ]
     },
@@ -570,7 +577,8 @@
             "estados": [
               "ACCEPTED"
             ]
-          }
+          },
+          "formato": "propuesta"
         }
       ]
     },
@@ -678,15 +686,17 @@
             "tipo": "documento",
             "clave": "prd",
             "aprobado": true
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "acta_arranque",
           "titulo": "Acta de arranque",
-          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "ayuda": "Marca el acta como lista y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "pdf"
         }
       ]
     },
@@ -808,7 +818,8 @@
             "tipo": "documento",
             "clave": "diseno",
             "aprobado": true
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "plan_aprobado",
@@ -818,7 +829,8 @@
             "tipo": "documento",
             "clave": "plan",
             "aprobado": true
-          }
+          },
+          "formato": "portal"
         },
         {
           "clave": "backlog_creado",
@@ -827,7 +839,8 @@
           "verifica": {
             "tipo": "tareas",
             "min": 1
-          }
+          },
+          "formato": "backlog"
         }
       ]
     },
@@ -934,7 +947,8 @@
             "min": 1,
             "hechas_min": 1,
             "sin_fallidas": true
-          }
+          },
+          "formato": "backlog"
         }
       ]
     },
@@ -1013,18 +1027,20 @@
         {
           "clave": "informe_pruebas",
           "titulo": "Informe de pruebas",
-          "ayuda": "Marca el informe como listo y deja el enlace o la referencia.",
+          "ayuda": "Marca el informe como listo y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "pdf"
         },
         {
           "clave": "acta_aceptacion",
           "titulo": "Acta de aceptación del cliente",
-          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "ayuda": "Marca el acta como lista y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "pdf_firmado"
         }
       ]
     },
@@ -1101,7 +1117,8 @@
           "ayuda": "El proyecto debe tener su URL de despliegue registrada.",
           "verifica": {
             "tipo": "despliegue"
-          }
+          },
+          "formato": "url"
         }
       ]
     },
@@ -1189,26 +1206,29 @@
         {
           "clave": "paquete_entrega",
           "titulo": "Paquete de entrega",
-          "ayuda": "Marca el paquete como entregado y deja el enlace o la referencia.",
+          "ayuda": "Marca el paquete como entregado y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "zip"
         },
         {
           "clave": "acta_cierre",
           "titulo": "Acta de cierre",
-          "ayuda": "Marca el acta como lista y deja el enlace o la referencia.",
+          "ayuda": "Marca el acta como lista y deja el enlace.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "pdf_firmado"
         },
         {
           "clave": "lecciones",
           "titulo": "Lecciones aprendidas",
-          "ayuda": "Resume o enlaza las lecciones aprendidas.",
+          "ayuda": "Enlaza las lecciones aprendidas.",
           "verifica": {
             "tipo": "manual"
-          }
+          },
+          "formato": "texto"
         }
       ]
     }

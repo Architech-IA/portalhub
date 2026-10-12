@@ -37,6 +37,22 @@ const TIPOS_SESION: [&str; 4] = ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"
 const ARTEFACTOS: [&str; 13] = ["prd", "diseno", "plan-ejec", "plan", "arquitectura", "diagramas", "cronograma", "riesgos", "cumplimiento", "cambios", "revision", "entrega", "codigo"];
 const ESTADOS_PROPUESTA: [&str; 5] = ["DRAFT", "SENT", "UNDER_REVIEW", "ACCEPTED", "REJECTED"];
 const DOCUMENTOS: [&str; 3] = ["prd", "diseno", "plan"];
+/// Formatos que puede esperar un entregable que marca una persona. Los automáticos llevan el de su verificación.
+const FORMATOS_MANUALES: [&str; 6] = ["pdf", "pdf_firmado", "zip", "texto", "hoja", "enlace"];
+
+/// Formato de un entregable que se verifica solo.
+pub fn formato_automatico(tipo: &str) -> &'static str {
+    match tipo {
+        "nota_lead" => "nota",
+        "reunion_lead" => "registro",
+        "documento" => "portal",
+        "arquitectura" => "diagrama",
+        "propuesta" => "propuesta",
+        "tareas" => "backlog",
+        "despliegue" => "url",
+        _ => "enlace",
+    }
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -240,7 +256,18 @@ fn limpiar_fase(f: &Value, a: &Value, comercial: bool, aprobadores: &[String]) -
             if ayuda.chars().count() > 300 {
                 return Err(format!("{donde}: la ayuda admite hasta 300 caracteres"));
             }
-            out.push(json!({ "clave": c, "titulo": texto(&r["titulo"], 3, 200, &format!("{donde}: título"))?, "ayuda": ayuda, "verifica": limpiar_verificacion(&r["verifica"], con_lead, comercial, &donde)? }));
+            let verifica = limpiar_verificacion(&r["verifica"], con_lead, comercial, &donde)?;
+            let tipo = verifica["tipo"].as_str().unwrap_or("manual").to_string();
+            let formato = if tipo == "manual" {
+                let f = r["formato"].as_str().unwrap_or("enlace");
+                if !FORMATOS_MANUALES.contains(&f) {
+                    return Err(format!("{donde}: el formato esperado debe ser uno de {}", FORMATOS_MANUALES.join(", ")));
+                }
+                f
+            } else {
+                formato_automatico(&tipo)
+            };
+            out.push(json!({ "clave": c, "titulo": texto(&r["titulo"], 3, 200, &format!("{donde}: título"))?, "ayuda": ayuda, "formato": formato, "verifica": verifica }));
         }
         o.insert("requeridos".into(), Value::Array(out));
     }
@@ -389,7 +416,7 @@ async fn vista_de(st: &AppState, codigo: &str) -> Result<Value, ApiError> {
 fn catalogo() -> Value {
     json!({
         "aprobadores": aprobadores_validos(), "tiposVerificacion": TIPOS_VERIFICACION, "tiposSesion": TIPOS_SESION, "artefactos": ARTEFACTOS,
-        "estadosPropuesta": ESTADOS_PROPUESTA, "documentos": DOCUMENTOS,
+        "estadosPropuesta": ESTADOS_PROPUESTA, "documentos": DOCUMENTOS, "formatosManuales": FORMATOS_MANUALES,
     })
 }
 
@@ -516,6 +543,9 @@ mod tests {
                 // la limpieza completa los valores por defecto de la verificación: se compara lo esencial
                 let esencial = |v: &Value| v["requeridos"].as_array().unwrap().iter().map(|r| (r["clave"].clone(), r["titulo"].clone(), r["verifica"]["tipo"].clone())).collect::<Vec<_>>();
                 assert_eq!(esencial(a), esencial(b));
+                for r in a["requeridos"].as_array().unwrap() {
+                    assert!(r["formato"].as_str().is_some(), "{}: sin formato", r["clave"]);
+                }
             }
         }
     }
@@ -531,6 +561,7 @@ mod tests {
         assert!(mal(json!({ "diagnostico": { "requeridos": [{ "clave": "x", "titulo": "Algo", "verifica": { "tipo": "manual" } }] } })), "clave muy corta");
         assert!(mal(json!({ "diagnostico": { "requeridos": [{ "clave": "algo", "titulo": "Algo", "verifica": { "tipo": "inventado" } }] } })));
         assert!(mal(json!({ "arranque": { "requeridos": [{ "clave": "nota", "titulo": "Notas del lead", "verifica": { "tipo": "nota_lead" } }] } })), "nota_lead solo en preventa");
+        assert!(mal(json!({ "contacto": { "requeridos": [{ "clave": "algo", "titulo": "Algo", "formato": "docx", "verifica": { "tipo": "manual" } }] } })), "formato manual desconocido");
         assert!(validar_ajustes(INTERNA, &json!({ "idea": { "requeridos": [{ "clave": "prop", "titulo": "Propuesta enviada", "verifica": { "tipo": "propuesta", "estados": ["SENT"] } }] } })).is_err());
     }
 
