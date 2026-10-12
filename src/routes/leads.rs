@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/leads/{id}", get(obtener).put(actualizar).delete(eliminar))
         .route("/api/leads/{id}/notes", get(notas_listar).post(nota_crear))
         .route("/api/leads/{id}/interactions", get(interacciones_listar).post(interaccion_crear))
+        .route("/api/leads/{id}/interactions/{iid}", axum::routing::delete(interaccion_eliminar))
         .route(
             "/api/leads/{id}/proposal",
             get(propuesta_obtener).post(propuesta_guardar).patch(propuesta_estado),
@@ -388,6 +389,23 @@ async fn interacciones_listar(State(st): State<AppState>, _s: Session, Path(id):
            FROM "Activity" a WHERE a."leadId" = $1 AND a.type IN ('CALL', 'EMAIL', 'MEETING', 'WHATSAPP')"#
     );
     Ok(Json(fetch_json(&st.pool, &sql, &[B::T(id)]).await?))
+}
+
+/// Borra una interacción del lead (no toca la reunión si estaba vinculada). Solo quien la registró o un administrador.
+async fn interaccion_eliminar(State(st): State<AppState>, sesion: Session, Path((id, iid)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    sin_sesion_de_usuario(&sesion, "No autenticado")?;
+    let fila = fetch_json_opt(
+        &st.pool,
+        r#"SELECT jsonb_build_object('userId', "userId") FROM "Activity" WHERE id = $1 AND "leadId" = $2 AND type IN ('CALL', 'EMAIL', 'MEETING', 'WHATSAPP')"#,
+        &[B::T(iid.clone()), B::T(id)],
+    )
+    .await?
+    .ok_or_else(|| ApiError::not_found("Interacción no encontrada"))?;
+    if fila["userId"].as_str() != Some(sesion.id.as_str()) && !sesion.is_admin() {
+        return Err(ApiError::forbidden("Solo quien la registró o un administrador puede borrarla"));
+    }
+    exec(&st.pool, r#"DELETE FROM "Activity" WHERE id = $1"#, &[B::T(iid)]).await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn interaccion_crear(
