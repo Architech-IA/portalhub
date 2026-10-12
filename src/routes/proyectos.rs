@@ -199,7 +199,7 @@ fn fuera_think(t: &str) -> String {
 
 /// Quita el razonamiento del modelo (`<think>…</think>`). Si el bloque parte una palabra (letra pegada a
 /// ambos lados) se CONSERVA tal cual: se prefiere un `<think>` visible a corromper la respuesta.
-fn quitar_pensamiento(t: &str) -> String {
+pub(super) fn quitar_pensamiento(t: &str) -> String {
     static R: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<think>.*?</think>").expect("re"));
     let mut salida = String::new();
     let mut ultimo = 0;
@@ -1283,7 +1283,7 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
 const SYS_MEMORIA: &str = "Mantienes la MEMORIA DE UN PROYECTO: un documento markdown corto y curado que la IA lee en TODAS las sesiones. Recibes la memoria actual y lo tratado en una sesión que acaba de cerrarse. Decide si hay algo que merezca quedar en la memoria y devuelve la memoria COMPLETA actualizada.\n\nReglas:\n- Guarda solo hechos duraderos: decisiones (con fecha), acuerdos con el cliente, restricciones, glosario, supuestos confirmados, pendientes y preguntas abiertas. No guardes conversación, saludos ni opiniones pasajeras.\n- Conserva lo que ya estaba; solo quita o marca como reemplazado algo si esta sesión lo contradice explícitamente.\n- No inventes: todo debe salir de la sesión o de la memoria actual. Marca «Por confirmar» lo dudoso.\n- Estructura sugerida: # Memoria del proyecto / ## Decisiones / ## Acuerdos con el cliente / ## Restricciones / ## Glosario / ## Pendientes y preguntas abiertas.\n- Bullets con fecha en formato AAAA-MM-DD cuando aplique.\nDevuelve SOLO un JSON: {\"sinCambios\": true} si no hay nada que guardar, o {\"sinCambios\": false, \"cambios\": \"1-3 frases con lo que se agregó o cambió\", \"memoria\": \"<markdown completo>\"}";
 
 /// Extrae un objeto JSON de la salida del modelo (con o sin fences, o rodeado de texto).
-fn extraer_json(t: &str) -> Option<Value> {
+pub(super) fn extraer_json(t: &str) -> Option<Value> {
     static FENCE_INI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^```(?:json)?\s*").expect("re"));
     static FENCE_FIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"```\s*$").expect("re"));
     let limpio = quitar_pensamiento(t);

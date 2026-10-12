@@ -10,7 +10,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -24,7 +24,7 @@ use crate::{
 };
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/api/proyectos/{id}/cliente", get(obtener).put(guardar)).route("/api/fases/clientes", get(buscar))
+    Router::new().route("/api/proyectos/{id}/cliente", get(obtener).put(guardar)).route("/api/fases/clientes", get(buscar)).route("/api/proyectos/{id}/cliente/sugerir", post(sugerir))
 }
 
 const ROLES: [(&str, &str); 4] = [("principal", "PRINCIPAL"), ("decisor", "DECISOR"), ("representante", "REPRESENTANTE_LEGAL"), ("firmante", "FIRMANTE")];
@@ -212,6 +212,99 @@ async fn buscar(State(st): State<AppState>, _se: Session, Query(q): Query<HashMa
     )
     .await?;
     Ok(Json(r))
+}
+
+// ── «Completar con IA»: propone los datos que faltan a partir de lo que hay en el proyecto ───────────
+const SYS_SUGERIR: &str = "Eres un asistente de preventa que completa la ficha de un cliente a partir de los datos de su proyecto. NO tienes acceso a internet: propón SOLO lo que se pueda sostener con el texto que recibes (o con conocimiento general muy seguro, como el país de una ciudad).\n\nReglas:\n- NIT y razón social: solo si aparecen literalmente en el texto. Si no aparecen, devuélvelos como null. Nunca los inventes ni los deduzcas del nombre comercial.\n- sector: una categoría breve (por ejemplo «Seguros», «Salud», «Construcción», «Legal») deducida de a qué se dedica la empresa.\n- ciudad y país: si el texto los menciona o se infieren con seguridad (pesos colombianos, prefijo telefónico +57, una ciudad conocida).\n- Cada propuesta lleva «confianza»: «alta» si está literal en el texto, «media» si es una deducción razonable, «baja» si es una suposición. Y «evidencia»: una cita corta o la razón (máximo 140 caracteres).\n\nResponde SOLO con un JSON de esta forma, con únicamente los campos pedidos: {\"razonSocial\": {\"valor\": \"…\", \"confianza\": \"alta\", \"evidencia\": \"…\"} o null, \"nit\": …, \"sector\": …, \"ciudad\": …, \"pais\": …}";
+
+const ETIQUETAS_SUG: [(&str, &str); 5] = [("razonSocial", "Razón social"), ("nit", "NIT"), ("sector", "Sector"), ("ciudad", "Ciudad"), ("pais", "País")];
+
+/// Deja solo las propuestas que se sostienen: del campo pedido, con evidencia y, en el NIT, presente en el texto del proyecto. Devuelve las propuestas y los avisos de lo descartado.
+pub fn depurar_sugerencias(crudo: &Value, pedidos: &[&str], contexto: &str, nombre_comercial: &str) -> (Vec<Value>, Vec<String>) {
+    let digitos_ctx: String = contexto.chars().filter(|c| c.is_ascii_digit()).collect();
+    let mut sugerencias = Vec::new();
+    let mut avisos = Vec::new();
+    for (campo, etiqueta) in ETIQUETAS_SUG {
+        if !pedidos.contains(&campo) {
+            continue;
+        }
+        let Some(o) = crudo.get(campo).filter(|o| o.is_object()) else {
+            avisos.push(format!("{etiqueta}: no hay datos suficientes en el proyecto para proponerlo."));
+            continue;
+        };
+        let valor = txt(&o["valor"]).chars().take(120).collect::<String>();
+        let evidencia = txt(&o["evidencia"]).chars().take(160).collect::<String>();
+        if es_relleno(&valor) || evidencia.is_empty() {
+            avisos.push(format!("{etiqueta}: no hay datos suficientes en el proyecto para proponerlo."));
+            continue;
+        }
+        let confianza = match txt(&o["confianza"]) { "alta" => "alta", "media" => "media", _ => "baja" };
+        if campo == "nit" {
+            let Some(d) = nit_normalizado(&valor) else { avisos.push("NIT: lo propuesto no parece un NIT, se descarta.".into()); continue };
+            let sin_dv = &d[..d.len() - 1];
+            if !digitos_ctx.contains(&d) && !digitos_ctx.contains(sin_dv) {
+                avisos.push("NIT: no aparece en ninguna nota ni adjunto del proyecto, así que no se propone (la IA no lo puede buscar).".into());
+                continue;
+            }
+        }
+        if campo == "razonSocial" && minus(&valor) == minus(nombre_comercial) {
+            avisos.push("Razón social: lo único que se encontró es el nombre comercial; se necesita el nombre legal completo.".into());
+            continue;
+        }
+        sugerencias.push(json!({ "campo": campo, "etiqueta": etiqueta, "valor": valor, "confianza": if campo == "nit" { "alta" } else { confianza }, "evidencia": evidencia }));
+    }
+    (sugerencias, avisos)
+}
+
+async fn sugerir(State(st): State<AppState>, _se: Session, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    sembrar_desde_lead(&st, &id).await;
+    let crudo = cargar_crudo(&st, &id).await?.ok_or_else(|| ApiError::not_found("Proyecto no encontrado"))?;
+    let ficha = armar(&crudo);
+    if !ficha["existe"].as_bool().unwrap_or(false) {
+        return Err(ApiError::bad_request("El proyecto todavía no tiene una empresa: crea o elige una primero"));
+    }
+    let c = &ficha["cliente"];
+    let mut pedidos: Vec<&str> = Vec::new();
+    if es_relleno(txt(&c["razonSocial"])) { pedidos.push("razonSocial"); }
+    if nit_normalizado(txt(&c["nit"])).is_none() { pedidos.push("nit"); }
+    if es_relleno(txt(&c["sector"])) { pedidos.push("sector"); }
+    if es_relleno(txt(&c["ciudad"])) { pedidos.push("ciudad"); }
+    if es_relleno(txt(&c["pais"])) { pedidos.push("pais"); }
+    if pedidos.is_empty() {
+        return Ok(Json(json!({ "sugerencias": [], "avisos": [], "mensaje": "No falta ninguno de los datos que la IA puede proponer." })));
+    }
+    // Lo que el proyecto sabe: la ficha, las notas por fase y los adjuntos
+    let p = &ficha["contactos"]["principal"];
+    let o = &ficha["oportunidad"];
+    let mut contexto = format!(
+        "EMPRESA (nombre comercial): {}\nCONTACTO: {} · correo {} · teléfono {}\nQUÉ QUIERE RESOLVER: {}\nVALOR ESTIMADO (COP): {}\n",
+        txt(&c["nombre"]), txt(&p["nombre"]), txt(&p["correo"]), txt(&p["telefono"]), txt(&o["resumen"]), o["valor"].as_f64().map(|v| format!("{v:.0}")).unwrap_or_default()
+    );
+    let notas = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', fase, 'c', contenido) ORDER BY fase), '[]'::jsonb) FROM "ProyectoNota" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await?;
+    let mut de_notas = String::new();
+    for n in notas.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        let t = crate::routes::aichat::texto_fase(n["c"].as_str().unwrap_or(""));
+        if !t.trim().is_empty() {
+            de_notas.push_str(&format!("[{}] {}\n", n["fase"].as_str().unwrap_or(""), t.trim()));
+        }
+    }
+    if !de_notas.is_empty() {
+        contexto.push_str(&format!("\nNOTAS DEL PROYECTO:\n{}\n", de_notas.chars().take(7000).collect::<String>()));
+    }
+    let adj = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('n', nombre, 't', LEFT(texto, 3500))), '[]'::jsonb) FROM (SELECT nombre, texto FROM "ProyectoAdjunto" WHERE "solucionId" = $1 AND legible AND texto <> '' ORDER BY "createdAt" DESC LIMIT 4) x"#, &[B::T(id.clone())]).await?;
+    for a in adj.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        contexto.push_str(&format!("\nADJUNTO «{}»:\n{}\n", a["n"].as_str().unwrap_or(""), a["t"].as_str().unwrap_or("")));
+    }
+    let pide: Vec<String> = pedidos.iter().map(|k| ETIQUETAS_SUG.iter().find(|(c, _)| c == k).map(|(c, e)| format!("{c} ({e})")).unwrap_or_default()).collect();
+    let usuario = format!("{contexto}\nCAMPOS PEDIDOS: {}", pide.join(", "));
+    let salida = crate::llm::call_open_code(&st, SYS_SUGERIR, &usuario, &format!("ficha-sugerir-{id}"), 900, 90).await.map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, format!("La IA no respondió: {e}")))?;
+    let json_ia = super::proyectos::extraer_json(&salida).ok_or_else(|| ApiError::new(StatusCode::BAD_GATEWAY, "La IA no devolvió una respuesta que se pueda leer. Inténtalo de nuevo."))?;
+    let (sugerencias, avisos) = depurar_sugerencias(&json_ia, &pedidos, &contexto, txt(&c["nombre"]));
+    Ok(Json(json!({
+        "sugerencias": sugerencias, "avisos": avisos,
+        "fuentes": { "notas": !de_notas.is_empty(), "adjuntos": adj.as_array().map(|a| a.len()).unwrap_or(0) },
+        "limite": "La IA no consulta internet: propone a partir de lo que hay en el proyecto (ficha, notas y adjuntos). Revisa cada dato antes de guardarlo.",
+    })))
 }
 
 // ── Escritura ────────────────────────────────────────────────────────────────────────────────
@@ -405,5 +498,31 @@ mod tests {
         assert_eq!(c["ok"], 11);
         let roles = c["roles"].as_array().unwrap();
         assert!(roles.iter().any(|r| r == "FIRMANTE") && !roles.iter().any(|r| r == "REPRESENTANTE_LEGAL"));
+    }
+
+    #[test]
+    fn la_ia_no_puede_inventar_un_nit() {
+        let ctx = "La empresa Promotora SAS (NIT 900.123.456-7) quiere una plataforma. Teléfono 3001234567";
+        let pedidos = ["nit", "razonSocial", "sector", "ciudad"];
+        let ia = json!({
+            "nit": { "valor": "900.123.456-7", "confianza": "alta", "evidencia": "NIT 900.123.456-7 en las notas" },
+            "razonSocial": { "valor": "Promotora Seguros", "confianza": "media", "evidencia": "nombre comercial" },
+            "sector": { "valor": "Seguros", "confianza": "media", "evidencia": "se dedica a seguros" },
+            "ciudad": null,
+            "pais": { "valor": "Colombia", "confianza": "alta", "evidencia": "pesos colombianos" },
+        });
+        let (s, avisos) = depurar_sugerencias(&ia, &pedidos, ctx, "Promotora Seguros");
+        let campos: Vec<&str> = s.iter().filter_map(|x| x["campo"].as_str()).collect();
+        assert_eq!(campos, vec!["nit", "sector"], "{campos:?} {avisos:?}");
+        assert!(avisos.iter().any(|a| a.starts_with("Razón social")) && avisos.iter().any(|a| a.starts_with("Ciudad")));
+        // un NIT que no está en ninguna parte se descarta
+        let inventado = json!({ "nit": { "valor": "800.555.444-1", "confianza": "alta", "evidencia": "lo supongo" } });
+        let (s2, a2) = depurar_sugerencias(&inventado, &["nit"], ctx, "X");
+        assert!(s2.is_empty() && a2[0].contains("no aparece"), "{a2:?}");
+        // sin evidencia o con valor de relleno no se propone; lo no pedido se ignora; la confianza rara pasa a «baja»
+        let (s3, _) = depurar_sugerencias(&json!({ "sector": { "valor": "Sin especificar", "evidencia": "x" }, "pais": { "valor": "Colombia", "confianza": "segurísima", "evidencia": "COP" } }), &["sector", "pais"], ctx, "X");
+        assert_eq!(s3.len(), 1);
+        assert_eq!(s3[0]["confianza"], "baja");
+        assert!(depurar_sugerencias(&json!({ "pais": { "valor": "Perú", "evidencia": "y" } }), &["sector"], ctx, "X").0.is_empty());
     }
 }
