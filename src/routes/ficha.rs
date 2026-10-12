@@ -75,6 +75,29 @@ fn opt(v: &Value) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
+// ── Un proyecto nuevo trae su ficha desde el lead ───────────────────────────────────────────
+/// Si el proyecto nació de un lead y todavía no tiene ficha, la arma con lo que el lead ya sabe (empresa, contacto, fuente, responsable). Es idempotente.
+async fn sembrar_desde_lead(st: &AppState, sol: &str) {
+    let _ = exec(
+        &st.pool,
+        r#"INSERT INTO "ProyectoFicha" ("solucionId", "clienteId", fuente, "responsableId", "responsableNombre")
+             SELECT s.id, l."clienteId", l.source, l."userId", u.name FROM "Solucion" s JOIN "Lead" l ON l.id = s."leadId" LEFT JOIN "User" u ON u.id = l."userId" WHERE s.id = $1
+             ON CONFLICT ("solucionId") DO NOTHING"#,
+        &[B::T(sol.into())],
+    )
+    .await;
+    let _ = exec(
+        &st.pool,
+        r#"INSERT INTO "ClienteContacto" (id, "clienteId", rol, nombre, correo, telefono)
+             SELECT gen_random_uuid()::text, c.id, 'PRINCIPAL', c.contacto, c.email,
+                    (SELECT l.phone FROM "Lead" l WHERE l."clienteId" = c.id AND l.phone IS NOT NULL AND l.phone <> '' ORDER BY l."updatedAt" DESC LIMIT 1)
+               FROM "Cliente" c JOIN "ProyectoFicha" pf ON pf."clienteId" = c.id WHERE pf."solucionId" = $1
+             ON CONFLICT ("clienteId", rol) DO NOTHING"#,
+        &[B::T(sol.into())],
+    )
+    .await;
+}
+
 // ── Lectura ──────────────────────────────────────────────────────────────────────────────────
 async fn cargar_crudo(st: &AppState, sol: &str) -> Result<Option<Value>, sqlx::Error> {
     fetch_json_opt(
@@ -158,6 +181,7 @@ pub fn completitud(f: &Value) -> Value {
 
 /// Para el motor de fases: cuántos datos tiene la ficha del proyecto y qué papeles están identificados.
 pub async fn completitud_de(st: &AppState, sol: &str) -> Value {
+    sembrar_desde_lead(st, sol).await;
     match cargar_crudo(st, sol).await {
         Ok(Some(crudo)) => completitud(&armar(&crudo)),
         _ => json!({ "ok": 0, "total": 11, "faltan": [], "roles": [] }),
@@ -165,6 +189,7 @@ pub async fn completitud_de(st: &AppState, sol: &str) -> Value {
 }
 
 async fn obtener(State(st): State<AppState>, _se: Session, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    sembrar_desde_lead(&st, &id).await;
     let crudo = cargar_crudo(&st, &id).await?.ok_or_else(|| ApiError::not_found("Proyecto no encontrado"))?;
     let mut f = armar(&crudo);
     f["completitud"] = completitud(&f);
@@ -213,6 +238,7 @@ async fn guardar(State(st): State<AppState>, se: Session, Path(id): Path<String>
         return Err(ApiError::not_found("Proyecto no encontrado"));
     }
     let quien = if se.name.is_empty() { se.email.clone() } else { se.name.clone() };
+    sembrar_desde_lead(&st, &id).await;
     exec(&st.pool, r#"INSERT INTO "ProyectoFicha" ("solucionId") VALUES ($1) ON CONFLICT ("solucionId") DO NOTHING"#, &[B::T(id.clone())]).await?;
     let mut cliente_id = fetch_text_opt(&st.pool, r#"SELECT "clienteId" FROM "ProyectoFicha" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await?;
 
