@@ -176,7 +176,11 @@ pub fn completitud(f: &Value) -> Value {
             roles.push(rol);
         }
     }
-    json!({ "ok": total - faltan.len(), "total": total, "faltan": faltan, "roles": roles })
+    // Nivel «básica»: lo mínimo para decidir si el lead sigue (el resto se completa antes de proponer)
+    const ESENCIALES: [&str; 5] = ["nombre", "principal", "resumen", "fuente", "responsable"];
+    let faltan_esenciales: Vec<Value> = faltan.iter().filter(|x| x["campo"].as_str().map(|c| ESENCIALES.contains(&c)).unwrap_or(false)).cloned().collect();
+    json!({ "ok": total - faltan.len(), "total": total, "faltan": faltan, "roles": roles,
+            "okEsencial": ESENCIALES.len() - faltan_esenciales.len(), "totalEsencial": ESENCIALES.len(), "faltanEsenciales": faltan_esenciales })
 }
 
 /// Para el motor de fases: cuántos datos tiene la ficha del proyecto y qué papeles están identificados.

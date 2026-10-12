@@ -86,11 +86,12 @@
         },
         {
           "clave": "ficha_cliente",
-          "titulo": "Ficha del cliente completa",
-          "ayuda": "Completa la ficha del cliente dentro del proyecto: nombre comercial, razón social, NIT, sector, ciudad y país, contacto principal (nombre, cargo, correo y teléfono), quién decide la compra, qué quiere resolver, fuente, valor estimado y responsable.",
+          "titulo": "Ficha del cliente (datos esenciales)",
+          "ayuda": "Lo mínimo para decidir si el lead sigue: nombre comercial, contacto principal (nombre, cargo, correo y teléfono), qué quiere resolver, fuente y responsable. El resto se completa antes de la propuesta.",
           "formato": "ficha",
           "verifica": {
-            "tipo": "ficha_cliente"
+            "tipo": "ficha_cliente",
+            "nivel": "basica"
           }
         },
         {
@@ -500,6 +501,15 @@
         }
       ],
       "requeridos": [
+        {
+          "clave": "ficha_cliente_completa",
+          "titulo": "Ficha del cliente completa",
+          "ayuda": "Completa la ficha del cliente antes de proponer: razón social, NIT, sector, ciudad y país, quién decide la compra y valor estimado, además de los datos esenciales.",
+          "formato": "ficha",
+          "verifica": {
+            "tipo": "ficha_cliente"
+          }
+        },
         {
           "clave": "propuesta_enviada",
           "titulo": "Propuesta enviada al cliente",

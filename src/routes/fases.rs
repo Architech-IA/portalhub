@@ -297,9 +297,11 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
             if ctx["leadId"].as_str().map(|l| !l.is_empty()).unwrap_or(false) { (true, "Registrado en el módulo de leads".into()) } else { (false, "El proyecto no está ligado a un lead del módulo de leads".into()) }
         }
         "ficha_cliente" => {
-            let (ok, total) = (ctx["ficha"]["ok"].as_i64().unwrap_or(0), ctx["ficha"]["total"].as_i64().unwrap_or(0));
-            let faltan: Vec<&str> = ctx["ficha"]["faltan"].as_array().map(|a| a.iter().filter_map(|x| x["etiqueta"].as_str()).take(4).collect()).unwrap_or_default();
-            (total > 0 && ok == total, if total > 0 && ok < total { format!("{ok} de {total} datos de la ficha: faltan {}", faltan.join(", ")) } else { format!("{ok} de {total} datos de la ficha") })
+            let basica = v["nivel"].as_str() == Some("basica");
+            let (sok, stot, sfal) = if basica { ("okEsencial", "totalEsencial", "faltanEsenciales") } else { ("ok", "total", "faltan") };
+            let (ok, total) = (ctx["ficha"][sok].as_i64().unwrap_or(0), ctx["ficha"][stot].as_i64().unwrap_or(0));
+            let faltan: Vec<&str> = ctx["ficha"][sfal].as_array().map(|a| a.iter().filter_map(|x| x["etiqueta"].as_str()).take(4).collect()).unwrap_or_default();
+            (total > 0 && ok == total, if total > 0 && ok < total { format!("{ok} de {total} datos {}de la ficha: faltan {}", if basica { "esenciales " } else { "" }, faltan.join(", ")) } else { format!("{ok} de {total} datos {}de la ficha", if basica { "esenciales " } else { "" }) })
         }
         "ficha_contacto" => {
             let rol = v["rol"].as_str().unwrap_or_default();
@@ -1416,11 +1418,16 @@ mod tests {
             "notas": { "diagnostico": { "chars": 120 }, "demo": { "chars": 40 } }, "reuniones": 1, "arquitecturaNodos": 2,
             "prd": { "tiene": true, "estado": "APROBADO", "requisitos": 3 }, "propuestas": [ { "status": "SENT" } ],
             "manuales": { "arranque": { "acta_arranque": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } } },
+            "ficha": { "ok": 11, "total": 11, "faltan": [], "okEsencial": 5, "totalEsencial": 5, "faltanEsenciales": [] },
         });
         let v = requeridos_vista(&ctx, "diagnostico", "DIAGNOSIS");
         assert!(v.iter().all(|x| x["ok"] == true), "diagnóstico debería cumplirse: {v:?}");
         assert!(requeridos_vista(&ctx, "propuesta", "PROPOSAL_SENT").iter().all(|x| x["ok"] == true));
         assert!(requeridos_vista(&ctx, "negociacion", "NEGOTIATION").iter().any(|x| x["ok"] == false), "ACCEPTED debe exigirse para ganar");
+        // nivel «básica»: con 5 de 5 esenciales basta aunque falten otros datos; la completa exige los 11
+        let parcial = json!({ "plantilla": "PROYECTO_COMPLETO", "ficha": { "ok": 8, "total": 11, "faltan": [{ "etiqueta": "NIT" }], "okEsencial": 5, "totalEsencial": 5, "faltanEsenciales": [] } });
+        assert!(requeridos_vista(&parcial, "identificacion", "NEW").iter().any(|x| x["clave"] == "ficha_cliente" && x["ok"] == true), "la ficha básica debe cumplirse con los 5 esenciales");
+        assert!(requeridos_vista(&parcial, "propuesta", "PROPOSAL_SENT").iter().any(|x| x["clave"] == "ficha_cliente_completa" && x["ok"] == false), "la completa exige los 11");
         let arr = requeridos_vista(&ctx, "arranque", "");
         assert!(arr.iter().all(|x| x["ok"] == true) && arr.iter().any(|x| x["manual"] == true));
     }

@@ -187,7 +187,7 @@ fn limpiar_verificacion(v: &Value, con_lead: bool, comercial: bool, donde: &str)
             if !comercial {
                 return Err(format!("{donde}: la ficha del cliente solo existe en el proyecto comercial"));
             }
-            Ok(json!({ "tipo": tipo }))
+            if v["nivel"].as_str() == Some("basica") { Ok(json!({ "tipo": tipo, "nivel": "basica" })) } else { Ok(json!({ "tipo": tipo })) }
         }
         "ficha_contacto" => {
             let rol = v["rol"].as_str().unwrap_or_default();
