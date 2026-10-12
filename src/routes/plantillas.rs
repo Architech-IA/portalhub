@@ -32,7 +32,8 @@ pub const COMERCIAL: &str = "PROYECTO_COMPLETO";
 pub const INTERNA: &str = "INICIATIVA_INTERNA";
 
 const APROBADORES: [&str; 7] = ["COMERCIAL", "LIDER_PREVENTA", "LIDER_TECNICO", "DIRECCION", "LIDER_PROYECTO", "CLIENTE", "DUENO"];
-const TIPOS_VERIFICACION: [&str; 8] = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "manual"];
+const TIPOS_VERIFICACION: [&str; 10] = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "ficha_cliente", "ficha_contacto", "manual"];
+const ROLES_FICHA: [&str; 3] = ["DECISOR", "REPRESENTANTE_LEGAL", "FIRMANTE"];
 const TIPOS_SESION: [&str; 4] = ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"];
 const ARTEFACTOS: [&str; 13] = ["prd", "diseno", "plan-ejec", "plan", "arquitectura", "diagramas", "cronograma", "riesgos", "cumplimiento", "cambios", "revision", "entrega", "codigo"];
 const ESTADOS_PROPUESTA: [&str; 5] = ["DRAFT", "SENT", "UNDER_REVIEW", "ACCEPTED", "REJECTED"];
@@ -50,6 +51,7 @@ pub fn formato_automatico(tipo: &str) -> &'static str {
         "propuesta" => "propuesta",
         "tareas" => "backlog",
         "despliegue" => "url",
+        "ficha_cliente" | "ficha_contacto" => "ficha",
         _ => "enlace",
     }
 }
@@ -173,6 +175,19 @@ fn limpiar_verificacion(v: &Value, con_lead: bool, comercial: bool, donde: &str)
                 return Err(format!("{donde}: «{tipo}» solo aplica a las fases de preventa del proyecto comercial"));
             }
             Ok(json!({ "tipo": tipo }))
+        }
+        "ficha_cliente" => {
+            if !comercial {
+                return Err(format!("{donde}: la ficha del cliente solo existe en el proyecto comercial"));
+            }
+            Ok(json!({ "tipo": tipo }))
+        }
+        "ficha_contacto" => {
+            let rol = v["rol"].as_str().unwrap_or_default();
+            if !comercial || !ROLES_FICHA.contains(&rol) {
+                return Err(format!("{donde}: elige a quién identificar en la ficha (decisor, representante legal o firmante)"));
+            }
+            Ok(json!({ "tipo": tipo, "rol": rol }))
         }
         "documento" => {
             let clave = v["clave"].as_str().unwrap_or_default();
@@ -416,7 +431,7 @@ async fn vista_de(st: &AppState, codigo: &str) -> Result<Value, ApiError> {
 fn catalogo() -> Value {
     json!({
         "aprobadores": aprobadores_validos(), "tiposVerificacion": TIPOS_VERIFICACION, "tiposSesion": TIPOS_SESION, "artefactos": ARTEFACTOS,
-        "estadosPropuesta": ESTADOS_PROPUESTA, "documentos": DOCUMENTOS, "formatosManuales": FORMATOS_MANUALES,
+        "estadosPropuesta": ESTADOS_PROPUESTA, "documentos": DOCUMENTOS, "formatosManuales": FORMATOS_MANUALES, "rolesFicha": ROLES_FICHA,
     })
 }
 

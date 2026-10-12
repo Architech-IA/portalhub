@@ -292,6 +292,17 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
             let sin_f = v["sin_fallidas"] == true;
             (total >= min && hechas >= hmin && (!sin_f || fallidas == 0), format!("{hechas} de {total} tareas hechas{}", if fallidas > 0 { format!(", {fallidas} fallida(s)") } else { String::new() }))
         }
+        "ficha_cliente" => {
+            let (ok, total) = (ctx["ficha"]["ok"].as_i64().unwrap_or(0), ctx["ficha"]["total"].as_i64().unwrap_or(0));
+            let faltan: Vec<&str> = ctx["ficha"]["faltan"].as_array().map(|a| a.iter().filter_map(|x| x["etiqueta"].as_str()).take(4).collect()).unwrap_or_default();
+            (total > 0 && ok == total, if total > 0 && ok < total { format!("{ok} de {total} datos de la ficha: faltan {}", faltan.join(", ")) } else { format!("{ok} de {total} datos de la ficha") })
+        }
+        "ficha_contacto" => {
+            let rol = v["rol"].as_str().unwrap_or_default();
+            let hay = ctx["ficha"]["roles"].as_array().map(|a| a.iter().any(|r| r == rol)).unwrap_or(false);
+            let quien = match rol { "REPRESENTANTE_LEGAL" => "el representante legal", "FIRMANTE" => "quién firma la aceptación y el cierre", _ => "quién decide la compra" };
+            if hay { (true, format!("Identificado: {quien}")) } else { (false, format!("Falta identificar {quien} en la ficha del cliente")) }
+        }
         "despliegue" => {
             let url = ctx["deployUrl"].as_str().filter(|u| !u.is_empty());
             match url { Some(u) => (true, format!("En producción: {u}")), None => (false, "Sin URL de despliegue registrada".into()) }
@@ -302,7 +313,7 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
         }
     };
     let m = &ctx["manuales"][fase][clave];
-    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue");
+    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "ficha_cliente" | "ficha_contacto");
     json!({
         "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "formato": r["formato"].as_str().unwrap_or_else(|| super::plantillas::formato_automatico(tipo)), "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
         "evidencia": if es_manual { m["evidencia"].clone() } else { Value::Null }, "por": if es_manual { m["por"].clone() } else { Value::Null }, "en": if es_manual { m["en"].clone() } else { Value::Null },
@@ -530,6 +541,7 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
         .await?;
         ctx["reuniones"] = json!(fetch_text_opt(&st.pool, r#"SELECT COUNT(*)::text FROM "Activity" WHERE "leadId" = $1 AND type::text = 'MEETING'"#, &[B::T(l.into())]).await?.and_then(|n| n.parse::<i64>().ok()).unwrap_or(0));
     }
+    ctx["ficha"] = super::ficha::completitud_de(st, sol).await;
     Ok(ctx)
 }
 
@@ -1368,7 +1380,7 @@ mod tests {
 
     #[test]
     fn cada_fase_exige_al_menos_un_entregable_valido_y_se_evalua() {
-        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "manual"];
+        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "ficha_cliente", "ficha_contacto", "manual"];
         for cod in ["PROYECTO_COMPLETO", "INICIATIVA_INTERNA"] {
             for fase in lista(plantilla_por_codigo(cod)) {
                 let clave = fase["clave"].as_str().unwrap();

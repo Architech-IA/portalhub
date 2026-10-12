@@ -76,6 +76,15 @@
       ],
       "requeridos": [
         {
+          "clave": "ficha_cliente",
+          "titulo": "Ficha del cliente completa",
+          "ayuda": "Completa la ficha del cliente dentro del proyecto: nombre comercial, razón social, NIT, sector, ciudad y país, contacto principal (nombre, cargo, correo y teléfono), quién decide la compra, qué quiere resolver, fuente, valor estimado y responsable.",
+          "formato": "ficha",
+          "verifica": {
+            "tipo": "ficha_cliente"
+          }
+        },
+        {
           "clave": "decision",
           "titulo": "Decisión de seguir o no, con su tope de esfuerzo",
           "ayuda": "Anótala en las notas de la etapa Identificación del Lead Hub.",
@@ -579,6 +588,16 @@
             ]
           },
           "formato": "propuesta"
+        },
+        {
+          "clave": "representante_legal",
+          "titulo": "Representante legal del cliente identificado",
+          "ayuda": "Anótalo en la ficha del cliente: quien firma el contrato.",
+          "formato": "ficha",
+          "verifica": {
+            "tipo": "ficha_contacto",
+            "rol": "REPRESENTANTE_LEGAL"
+          }
         }
       ]
     },
@@ -1041,6 +1060,16 @@
             "tipo": "manual"
           },
           "formato": "pdf_firmado"
+        },
+        {
+          "clave": "firmante",
+          "titulo": "Quién firma por el cliente identificado",
+          "ayuda": "Anótalo en la ficha del cliente: quien firma la aceptación y el cierre.",
+          "formato": "ficha",
+          "verifica": {
+            "tipo": "ficha_contacto",
+            "rol": "FIRMANTE"
+          }
         }
       ]
     },
@@ -1229,6 +1258,16 @@
             "tipo": "manual"
           },
           "formato": "texto"
+        },
+        {
+          "clave": "firmante",
+          "titulo": "Quién firma por el cliente identificado",
+          "ayuda": "Anótalo en la ficha del cliente: quien firma la aceptación y el cierre.",
+          "formato": "ficha",
+          "verifica": {
+            "tipo": "ficha_contacto",
+            "rol": "FIRMANTE"
+          }
         }
       ]
     }
