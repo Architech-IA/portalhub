@@ -32,7 +32,7 @@ pub const COMERCIAL: &str = "PROYECTO_COMPLETO";
 pub const INTERNA: &str = "INICIATIVA_INTERNA";
 
 const APROBADORES: [&str; 7] = ["COMERCIAL", "LIDER_PREVENTA", "LIDER_TECNICO", "DIRECCION", "LIDER_PROYECTO", "CLIENTE", "DUENO"];
-const TIPOS_VERIFICACION: [&str; 10] = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "ficha_cliente", "ficha_contacto", "manual"];
+const TIPOS_VERIFICACION: [&str; 11] = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
 const ROLES_FICHA: [&str; 3] = ["DECISOR", "REPRESENTANTE_LEGAL", "FIRMANTE"];
 const TIPOS_SESION: [&str; 4] = ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"];
 const ARTEFACTOS: [&str; 13] = ["prd", "diseno", "plan-ejec", "plan", "arquitectura", "diagramas", "cronograma", "riesgos", "cumplimiento", "cambios", "revision", "entrega", "codigo"];
@@ -45,7 +45,7 @@ const FORMATOS_MANUALES: [&str; 6] = ["pdf", "pdf_firmado", "zip", "texto", "hoj
 pub fn formato_automatico(tipo: &str) -> &'static str {
     match tipo {
         "nota_lead" => "nota",
-        "reunion_lead" => "registro",
+        "reunion_lead" | "lead_registrado" => "registro",
         "documento" => "portal",
         "arquitectura" => "diagrama",
         "propuesta" => "propuesta",
@@ -173,6 +173,12 @@ fn limpiar_verificacion(v: &Value, con_lead: bool, comercial: bool, donde: &str)
         "nota_lead" | "reunion_lead" => {
             if !con_lead || !comercial {
                 return Err(format!("{donde}: «{tipo}» solo aplica a las fases de preventa del proyecto comercial"));
+            }
+            Ok(json!({ "tipo": tipo }))
+        }
+        "lead_registrado" => {
+            if !comercial {
+                return Err(format!("{donde}: el lead solo existe en el proyecto comercial"));
             }
             Ok(json!({ "tipo": tipo }))
         }

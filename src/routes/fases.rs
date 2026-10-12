@@ -292,6 +292,9 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
             let sin_f = v["sin_fallidas"] == true;
             (total >= min && hechas >= hmin && (!sin_f || fallidas == 0), format!("{hechas} de {total} tareas hechas{}", if fallidas > 0 { format!(", {fallidas} fallida(s)") } else { String::new() }))
         }
+        "lead_registrado" => {
+            if ctx["leadId"].as_str().map(|l| !l.is_empty()).unwrap_or(false) { (true, "Registrado en el módulo de leads".into()) } else { (false, "El proyecto no está ligado a un lead del módulo de leads".into()) }
+        }
         "ficha_cliente" => {
             let (ok, total) = (ctx["ficha"]["ok"].as_i64().unwrap_or(0), ctx["ficha"]["total"].as_i64().unwrap_or(0));
             let faltan: Vec<&str> = ctx["ficha"]["faltan"].as_array().map(|a| a.iter().filter_map(|x| x["etiqueta"].as_str()).take(4).collect()).unwrap_or_default();
@@ -313,7 +316,7 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
         }
     };
     let m = &ctx["manuales"][fase][clave];
-    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "ficha_cliente" | "ficha_contacto");
+    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "lead_registrado" | "ficha_cliente" | "ficha_contacto");
     json!({
         "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "formato": r["formato"].as_str().unwrap_or_else(|| super::plantillas::formato_automatico(tipo)), "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
         "evidencia": if es_manual { m["evidencia"].clone() } else { Value::Null }, "por": if es_manual { m["por"].clone() } else { Value::Null }, "en": if es_manual { m["en"].clone() } else { Value::Null },
@@ -1380,7 +1383,7 @@ mod tests {
 
     #[test]
     fn cada_fase_exige_al_menos_un_entregable_valido_y_se_evalua() {
-        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "ficha_cliente", "ficha_contacto", "manual"];
+        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
         for cod in ["PROYECTO_COMPLETO", "INICIATIVA_INTERNA"] {
             for fase in lista(plantilla_por_codigo(cod)) {
                 let clave = fase["clave"].as_str().unwrap();

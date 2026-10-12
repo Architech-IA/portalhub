@@ -76,6 +76,15 @@
       ],
       "requeridos": [
         {
+          "clave": "lead_registrado",
+          "titulo": "Lead registrado en el módulo de leads",
+          "ayuda": "Todo proyecto comercial parte de un lead registrado en el módulo de leads. Si falta, regístralo allí y ligalo al proyecto.",
+          "formato": "registro",
+          "verifica": {
+            "tipo": "lead_registrado"
+          }
+        },
+        {
           "clave": "ficha_cliente",
           "titulo": "Ficha del cliente completa",
           "ayuda": "Completa la ficha del cliente dentro del proyecto: nombre comercial, razón social, NIT, sector, ciudad y país, contacto principal (nombre, cargo, correo y teléfono), quién decide la compra, qué quiere resolver, fuente, valor estimado y responsable.",
