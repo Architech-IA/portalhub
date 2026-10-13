@@ -1038,8 +1038,12 @@ async fn texto_del_rol(st: &AppState, se: &Value) -> Option<String> {
     let r = super::fases::roles_de_fase(&plantilla, fase).into_iter().find(|r| r["clave"] == rol)?;
     let cierre: Vec<String> = se["cierre"].as_array().map(|a| a.iter().map(|c| format!("- [{}] {}", if c["ok"] == true { "x" } else { " " }, c["texto"].as_str().unwrap_or(""))).collect()).unwrap_or_default();
     let artefactos: Vec<&str> = r["artefactos"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+    let entregables = match super::fases::entregables_para_sesion(st, se["solucionId"].as_str()?, fase).await {
+        Some(t) => format!("\n\nENTREGABLES OBLIGATORIOS PARA CERRAR LA FASE (el sistema los verifica solo; no los das por hechos tú):\n{t}\nTu trabajo en esta sesión es producir o avanzar los entregables que faltan, empezando por los más cercanos al objetivo de tu rol. Al empezar, di cuáles faltan y por cuál vas. Cuando una respuesta tuya sirva para un entregable, dilo (por ejemplo «esto sirve para el entregable X») y señala dónde debe quedar guardado para que el sistema lo reconozca. No inventes datos: si falta información del cliente, pídela."),
+        None => String::new(),
+    };
     Some(format!(
-        "ROL DE ESTA SESIÓN: «{}» (fase {fase}).\nObjetivo: {}\nResultado esperado: {}\nArtefactos que suele tocar: {}.\nLista de cierre (lo que debe quedar hecho):\n{}\nMantén la conversación orientada a este objetivo. Cuando el avance lo permita, di qué puntos de la lista de cierre ya se cumplieron y cuáles faltan, y sugiere a la persona marcarlos o cerrar la sesión.",
+        "ROL DE ESTA SESIÓN: «{}» (fase {fase}).\nObjetivo: {}\nResultado esperado: {}\nArtefactos que suele tocar: {}.\nLista de cierre (lo que debe quedar hecho):\n{}{entregables}\nMantén la conversación orientada a este objetivo. Cuando el avance lo permita, di qué puntos de la lista de cierre ya se cumplieron y cuáles faltan, y sugiere a la persona marcarlos o cerrar la sesión.",
         r["titulo"].as_str().unwrap_or(""), r["objetivo"].as_str().unwrap_or(""), r["resultado"].as_str().unwrap_or(""), artefactos.join(", "), cierre.join("\n")
     ))
 }

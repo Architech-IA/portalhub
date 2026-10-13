@@ -331,6 +331,31 @@ fn requeridos_vista(ctx: &Value, fase: &str, lead_status: &str) -> Vec<Value> {
     requeridos_de_fase(ctx["plantilla"].as_str().unwrap_or(""), fase).iter().map(|r| evaluar_requerido(r, lead_status, ctx, fase)).collect()
 }
 
+/// Entregables obligatorios de la fase con su estado actual, en texto para el prompt de una sesión.
+/// Así cada sesión sabe qué falta producir y qué ya está cumplido.
+pub(super) async fn entregables_para_sesion(st: &AppState, sol: &str, fase: &str) -> Option<String> {
+    let est = cargar(st, sol).await.ok()??;
+    let def = &est["definicion"];
+    let lead_id = lead_de(st, sol).await.ok()?;
+    let mut ctx = contexto_recursos(st, sol, lead_id.as_deref()).await.ok()?;
+    ctx["plantilla"] = est["plantilla"].clone();
+    ctx["manuales"] = est["entregables"].clone();
+    let ls = indice(def, fase).and_then(|i| lista(def)[i]["leadStatus"].as_str().map(String::from)).unwrap_or_default();
+    let v = requeridos_vista(&ctx, fase, &ls);
+    if v.is_empty() {
+        return None;
+    }
+    let lineas: Vec<String> = v
+        .iter()
+        .map(|r| {
+            let (ok, det) = (r["ok"] == true, r["detalle"].as_str().unwrap_or(""));
+            format!("- [{}] {}{}{}", if ok { "x" } else { " " }, r["titulo"].as_str().unwrap_or(""), if det.is_empty() { String::new() } else { format!(" — {det}") }, if ok { String::new() } else { format!(". Qué hacer: {}", r["ayuda"].as_str().unwrap_or("")) })
+        })
+        .collect();
+    Some(lineas.join("
+"))
+}
+
 /// Bloque (PREVENTA / EJECUCION…) de una fase según la plantilla vigente.
 pub(super) fn bloque_de_fase(plantilla: &str, fase: &str) -> Option<String> {
     lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["bloque"].as_str().map(String::from))
