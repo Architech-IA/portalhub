@@ -105,6 +105,7 @@ async fn main() {
     let state = AppState { pool, cfg: cfg.clone(), http };
     // Las plantillas de fases con los ajustes del editor (si los hay).
     routes::plantillas::cargar_efectivas(&state).await;
+    routes::plantillas::propagar_fabrica(&state).await;
     if !modo_motor {
         routes::seguimiento::iniciar(state.clone());
     } else {

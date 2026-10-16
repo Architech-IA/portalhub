@@ -333,18 +333,29 @@
           "entregable": "plan_aprobado"
         },
         {
+          "clave": "descomposicion",
+          "titulo": "Descomponer la solución en partes entregables, con orden de construcción",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Dividir la solución en partes que se puedan construir, probar y entregar por separado (módulos, pantallas, integraciones o automatizaciones, según el proyecto): qué incluye cada una, de cuáles depende, en qué orden se construyen, cuál es el primer incremento que ya se puede mostrar y cómo se sabe que está terminada. Se documenta en el Diseño técnico.",
+          "entregable": "descomposicion_definida"
+        },
+        {
           "clave": "backlog",
           "titulo": "Generar épicas, sprints y tareas a partir del PRD y el diseño",
           "tipo": "AGENTE",
           "area": "Development",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD.",
+          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD. Las épicas salen de las partes entregables de la descomposición.",
           "entregable": "backlog_creado"
         }
       ],
       "entregables": [
         "Diseño técnico",
+        "Descomposición del trabajo en partes entregables",
         "Plan de ejecución",
         "Backlog con épicas y sprints"
       ],
@@ -353,6 +364,7 @@
         "aprobador": "LIDER_TECNICO",
         "criterios": [
           "El diseño técnico está aprobado",
+          "La solución está dividida en partes entregables, con orden de construcción y primer incremento",
           "El plan de ejecución está aprobado",
           "El backlog está creado y priorizado",
           "El diagrama de arquitectura y el modelo de datos están completos"
@@ -394,7 +406,8 @@
           "resultado": "Diseño técnico y arquitectura coherentes con el PRD.",
           "cierre": [
             "La arquitectura cubre los requisitos",
-            "Las decisiones con riesgo quedaron justificadas"
+            "Las decisiones con riesgo quedaron justificadas",
+            "La solución está dividida en partes entregables, con dependencias, orden de construcción y primer incremento"
           ]
         },
         {
@@ -410,7 +423,8 @@
           "resultado": "Backlog creado y cronograma.",
           "cierre": [
             "Cada requisito tiene tareas en el backlog",
-            "El cronograma tiene dependencias"
+            "El cronograma tiene dependencias",
+            "Las épicas y sprints salen de las partes entregables definidas"
           ]
         }
       ],
@@ -425,6 +439,15 @@
             "aprobado": true
           },
           "formato": "portal"
+        },
+        {
+          "clave": "descomposicion_definida",
+          "titulo": "Descomposición del trabajo definida",
+          "ayuda": "El Diseño técnico describe las partes entregables de la solución, sus dependencias, el orden de construcción y el primer incremento. Confírmalo con una nota.",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "texto"
         },
         {
           "clave": "plan_aprobado",
@@ -483,7 +506,7 @@
           "area": "Development",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas."
+          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas. Actualizar también la descomposición del trabajo si cambió (partes, dependencias u orden)."
         }
       ],
       "entregables": [

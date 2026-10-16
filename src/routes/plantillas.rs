@@ -100,6 +100,18 @@ pub async fn cargar_efectivas(st: &AppState) {
     }
 }
 
+/// Lleva a los proyectos ya iniciados lo que cambió en la plantilla vigente (por ejemplo, una versión nueva de fábrica). Es idempotente: si no hay
+/// diferencias no toca nada.
+pub async fn propagar_fabrica(st: &AppState) {
+    for codigo in [COMERCIAL, INTERNA] {
+        match propagar(st, codigo, efectiva(codigo), false).await {
+            Ok((n, _)) if n > 0 => tracing::info!("[plantillas] {n} proyecto(s) de {codigo} puestos al día con la plantilla vigente"),
+            Ok(_) => {}
+            Err(_) => tracing::error!("[plantillas] no se pudo poner al día los proyectos de {codigo}"),
+        }
+    }
+}
+
 // ── Funciones puras ──────────────────────────────────────────────────────────────────────────
 /// Superpone los ajustes (por clave de fase) a la plantilla de fábrica.
 pub fn aplicar_ajustes(base: &Value, ajustes: &Value) -> Value {
