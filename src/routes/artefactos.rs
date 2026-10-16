@@ -364,11 +364,97 @@ pub fn aplicar_ops(clave: &str, actual: &str, ops: &Value) -> Result<String, Api
         "cronograma" => {
             let mut fases = match parse_o_texto(actual) {
                 Value::Array(a) => a,
-                _ => return Err(ApiError::bad_request("El cronograma no tiene fases")),
+                Value::Null => vec![],
+                _ if actual.trim().is_empty() => vec![],
+                _ => return Err(ApiError::bad_request("El cronograma tiene un formato que no se puede editar con propuestas")),
             };
             for op in lista {
+                match op["op"].as_str() {
+                    Some("agregar_fase") => {
+                        let v = &op["valor"];
+                        let (ini, fin) = (v["fechaInicio"].as_str().unwrap_or(""), v["fechaFin"].as_str().unwrap_or(""));
+                        if !fecha_ok(ini) || !fecha_ok(fin) || fin < ini {
+                            return Err(ApiError::bad_request("La fase nueva necesita fechaInicio y fechaFin válidas (AAAA-MM-DD) y el fin no puede ser anterior al inicio"));
+                        }
+                        let depende = v["dependeDe"].as_str().filter(|d| !d.is_empty());
+                        if let Some(d) = depende {
+                            if !fases.iter().any(|f| f["id"].as_str() == Some(d)) {
+                                return Err(ApiError::bad_request("dependeDe apunta a una fase que no existe"));
+                            }
+                        }
+                        let mut nueva = json!({
+                            "id": new_id(), "fase": v["fase"].as_str().unwrap_or("").trim().chars().take(120).collect::<String>(), "fechaInicio": ini, "fechaFin": fin,
+                            "estado": match v["estado"].as_str() { Some(e) if ["PENDIENTE", "EN_CURSO", "COMPLETADA"].contains(&e) => e, _ => "PENDIENTE" },
+                        });
+                        if let Some(d) = depende {
+                            nueva["dependeDe"] = json!(d);
+                        }
+                        fases.push(nueva);
+                        continue;
+                    }
+                    Some("editar_fase") => {
+                        let id = op["id"].as_str().unwrap_or("");
+                        let pos = fases.iter().position(|f| f["id"].as_str() == Some(id)).ok_or_else(|| ApiError::bad_request("La fase a editar no existe"))?;
+                        let c = &op["cambios"];
+                        for k in ["fase", "fechaInicio", "fechaFin", "estado", "dependeDe"] {
+                            let Some(v) = c.get(k) else { continue };
+                            match k {
+                                "fase" => fases[pos]["fase"] = json!(v.as_str().unwrap_or("").trim().chars().take(120).collect::<String>()),
+                                "fechaInicio" | "fechaFin" => {
+                                    if !fecha_ok(v.as_str().unwrap_or("")) {
+                                        return Err(ApiError::bad_request("Las fechas deben ser AAAA-MM-DD"));
+                                    }
+                                    fases[pos][k] = v.clone();
+                                }
+                                "estado" => {
+                                    if !matches!(v.as_str(), Some("PENDIENTE") | Some("EN_CURSO") | Some("COMPLETADA")) {
+                                        return Err(ApiError::bad_request("estado debe ser PENDIENTE, EN_CURSO o COMPLETADA"));
+                                    }
+                                    fases[pos]["estado"] = v.clone();
+                                }
+                                _ => match v.as_str().filter(|d| !d.is_empty()) {
+                                    None => {
+                                        if let Some(o) = fases[pos].as_object_mut() {
+                                            o.remove("dependeDe");
+                                        }
+                                    }
+                                    Some(d) => {
+                                        if d == id || !fases.iter().any(|f| f["id"].as_str() == Some(d)) {
+                                            return Err(ApiError::bad_request("dependeDe debe ser otra fase existente"));
+                                        }
+                                        fases[pos]["dependeDe"] = json!(d);
+                                    }
+                                },
+                            }
+                        }
+                        let (i, f) = (fases[pos]["fechaInicio"].as_str().unwrap_or(""), fases[pos]["fechaFin"].as_str().unwrap_or(""));
+                        if f < i {
+                            return Err(ApiError::bad_request("El fin de una fase no puede ser anterior a su inicio"));
+                        }
+                        continue;
+                    }
+                    Some("quitar_fase") => {
+                        let id = op["id"].as_str().unwrap_or("").to_string();
+                        let Some(pos) = fases.iter().position(|f| f["id"].as_str() == Some(id.as_str())) else { return Err(ApiError::bad_request("La fase a quitar no existe")) };
+                        let heredada = fases[pos]["dependeDe"].as_str().map(String::from);
+                        fases.remove(pos);
+                        // Las fases que dependían de la quitada pasan a depender de la anterior de la cadena (o de nadie)
+                        for f in fases.iter_mut().filter(|f| f["dependeDe"].as_str() == Some(id.as_str())) {
+                            match &heredada {
+                                Some(h) => f["dependeDe"] = json!(h),
+                                None => {
+                                    if let Some(o) = f.as_object_mut() {
+                                        o.remove("dependeDe");
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
                 if op["op"] != "desplazar" {
-                    return Err(ApiError::bad_request("En el cronograma solo se puede desplazar"));
+                    return Err(ApiError::bad_request("Operación desconocida en el cronograma"));
                 }
                 let dias = op["dias"].as_i64().filter(|d| *d != 0 && d.abs() <= 365).ok_or_else(|| ApiError::bad_request("dias debe estar entre -365 y 365 y no ser 0"))?;
                 let origen = op["desdeId"].as_str().map(String::from);
@@ -405,11 +491,119 @@ pub fn aplicar_ops(clave: &str, actual: &str, ops: &Value) -> Result<String, Api
             }
             Ok(Value::Array(fases).to_string())
         }
+        "planEjecucion" => {
+            let mut base = match parse_o_texto(actual) {
+                Value::Object(o) => Value::Object(o),
+                Value::Null => json!({}),
+                _ if actual.trim().is_empty() => json!({}),
+                _ => return Err(ApiError::bad_request("El plan de ejecución actual está en un formato antiguo: ábrelo y guárdalo una vez antes de aceptar la propuesta")),
+            };
+            let limpio = |v: &Value, max: usize| -> String { v.as_str().unwrap_or("").trim().chars().take(max).collect() };
+            for op in lista {
+                let ruta = op["ruta"].as_str().unwrap_or("");
+                match op["op"].as_str() {
+                    Some("agregar") => {
+                        let campos: &[&str] = match ruta {
+                            "ambientes" => &["ambiente", "proposito", "despliega", "promocion"],
+                            "raci" => &["actividad", "responsable", "aprueba", "consultado", "informado"],
+                            "comunicacion" => &["que", "audiencia", "frecuencia", "canal", "responsable"],
+                            _ => return Err(ApiError::bad_request("Ruta del plan de ejecución desconocida")),
+                        };
+                        let mut fila = json!({ "id": new_id() });
+                        for c in campos {
+                            fila[*c] = json!(limpio(&op["valor"][*c], 600));
+                        }
+                        if fila[campos[0]].as_str().map(str::is_empty).unwrap_or(true) {
+                            return Err(ApiError::bad_request("Falta el dato principal de la fila"));
+                        }
+                        if !base[ruta].is_array() {
+                            base[ruta] = json!([]);
+                        }
+                        base[ruta].as_array_mut().map(|a| a.push(fila));
+                    }
+                    Some("establecer") => {
+                        if !matches!(ruta, "qa" | "release" | "cambios") {
+                            return Err(ApiError::bad_request("Ruta del plan de ejecución desconocida"));
+                        }
+                        base[ruta] = json!(limpio(&op["valor"], 4000));
+                    }
+                    _ => return Err(ApiError::bad_request("Operación desconocida en el plan de ejecución")),
+                }
+            }
+            Ok(base.to_string())
+        }
+        "prd" => {
+            let mut base = match parse_o_texto(actual) {
+                Value::Object(o) => Value::Object(o),
+                Value::Null => json!({}),
+                _ if actual.trim().is_empty() => json!({}),
+                _ => return Err(ApiError::bad_request("El PRD actual está en un formato antiguo: ábrelo y guárdalo una vez antes de aceptar la propuesta")),
+            };
+            for op in lista {
+                if op["op"] != "reemplazar" {
+                    return Err(ApiError::bad_request("En el PRD solo se puede proponer el contenido nuevo"));
+                }
+                let Some(nuevo) = op["valor"].as_object() else { return Err(ApiError::bad_request("El valor debe ser un objeto")) };
+                for (k, v) in nuevo {
+                    if !CAMPOS_PRD.contains(&k.as_str()) {
+                        continue;
+                    }
+                    if k == "requisitos" {
+                        // Los requisitos que ya existen se conservan (el backlog los referencia por id): solo se agregan los nuevos.
+                        let mut actuales = base["requisitos"].as_array().cloned().unwrap_or_default();
+                        for mut r in v.as_array().cloned().unwrap_or_default() {
+                            let t = r["texto"].as_str().unwrap_or("").trim().to_lowercase();
+                            if t.is_empty() || actuales.iter().any(|a| a["texto"].as_str().unwrap_or("").trim().to_lowercase() == t) {
+                                continue;
+                            }
+                            if r["id"].as_str().map(|x| x.is_empty()).unwrap_or(true) {
+                                r["id"] = json!(new_id());
+                            }
+                            actuales.push(r);
+                        }
+                        base["requisitos"] = Value::Array(actuales);
+                    } else {
+                        let vacio = match v {
+                            Value::String(s) => s.trim().is_empty(),
+                            Value::Array(a) => a.is_empty(),
+                            Value::Null => true,
+                            _ => false,
+                        };
+                        if !vacio {
+                            base[k.as_str()] = v.clone();
+                        }
+                    }
+                }
+            }
+            Ok(base.to_string())
+        }
         _ => Err(ApiError::bad_request("Este artefacto todavía no admite propuestas")),
     }
 }
 
+const CAMPOS_PRD: [&str; 14] = ["resumenEjecutivo", "problema", "objetivoGeneral", "objetivosEspecificos", "dentroDeAlcance", "fueraDeAlcance", "personas", "requisitos", "requisitosNoFuncionales", "metricas", "riesgos", "dependencias", "supuestos", "preguntasAbiertas"];
+
+/// Crea una propuesta pendiente sobre un artefacto (la usan las sesiones de trabajo).
+pub async fn crear_propuesta(st: &AppState, sol: &str, clave: &str, titulo: &str, detalle: Option<String>, ops: Value, creado_por: &str) -> Result<Value, ApiError> {
+    clave_valida(clave)?;
+    validar_forma(clave, &ops)?;
+    fetch_json_opt(
+        &st.pool,
+        r#"WITH ins AS (INSERT INTO "ArtefactoPropuesta" (id, "solucionId", clave, titulo, detalle, ops, origen, "tareaId", "creadoPor", "createdAt")
+             SELECT $1, so.id, $3, $4, $5, $6, 'PERSONA', NULL, $7, NOW() FROM "Solucion" so WHERE so.id = $2 RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
+        &[B::T(new_id()), B::T(sol.into()), B::T(clave.into()), B::T(titulo.chars().take(200).collect()), B::OT(detalle), B::J(ops), B::T(creado_por.into())],
+    )
+    .await?
+    .ok_or_else(|| ApiError::not_found("No encontrado"))
+}
+
 /// `YYYY-MM-DD` + días (vacío o inválido queda igual).
+/// `AAAA-MM-DD` con mes y día razonables.
+pub fn fecha_ok(f: &str) -> bool {
+    let p: Vec<i64> = f.split('-').filter_map(|x| x.parse().ok()).collect();
+    f.len() == 10 && p.len() == 3 && (1..=12).contains(&p[1]) && (1..=31).contains(&p[2]) && p[0] >= 2000
+}
+
 pub fn sumar_dias(fecha: &str, dias: i64) -> String {
     let p: Vec<i64> = fecha.split('-').filter_map(|x| x.parse().ok()).collect();
     if p.len() != 3 {
@@ -470,7 +664,19 @@ fn validar_forma(clave: &str, ops: &Value) -> Result<(), ApiError> {
         let ok = match clave {
             "arquitectura" => op["op"] == "agregar" && matches!(op["ruta"].as_str(), Some("nodes") | Some("connections")) && op["valor"].is_object(),
             "disenoTecnico" => op["op"] == "agregar" && matches!(op["ruta"].as_str(), Some("entidades") | Some("stack") | Some("integraciones") | Some("decisiones")) && op["valor"].is_object(),
-            "cronograma" => op["op"] == "desplazar" && op["dias"].as_i64().map(|d| d != 0 && d.abs() <= 365).unwrap_or(false),
+            "prd" => lista.len() == 1 && op["op"] == "reemplazar" && op["valor"].is_object(),
+            "cronograma" => match op["op"].as_str() {
+                Some("desplazar") => op["dias"].as_i64().map(|d| d != 0 && d.abs() <= 365).unwrap_or(false),
+                Some("agregar_fase") => op["valor"]["fase"].as_str().map(|f| !f.trim().is_empty()).unwrap_or(false),
+                Some("editar_fase") => op["id"].as_str().is_some() && op["cambios"].is_object(),
+                Some("quitar_fase") => op["id"].as_str().is_some(),
+                _ => false,
+            },
+            "planEjecucion" => match op["op"].as_str() {
+                Some("agregar") => matches!(op["ruta"].as_str(), Some("ambientes") | Some("raci") | Some("comunicacion")) && op["valor"].is_object(),
+                Some("establecer") => matches!(op["ruta"].as_str(), Some("qa") | Some("release") | Some("cambios")) && op["valor"].is_string(),
+                _ => false,
+            },
             _ => return Err(ApiError::bad_request("Este artefacto todavía no admite propuestas")),
         };
         if !ok {
@@ -505,7 +711,7 @@ async fn propuesta_decidir(State(st): State<AppState>, sesion: Session, Path(pid
             let (marca, quien) = (ahora(&st).await, nombre_de(&sesion));
             let (viejo, _) = actualizar_columna(&st, &sol, &clave, |actual| {
                 let mut nuevo = aplicar_ops(&clave, actual, &ops)?;
-                if clave == "disenoTecnico" {
+                if clave == "disenoTecnico" || clave == "prd" || clave == "planEjecucion" {
                     let mut d = parse_o_texto(&nuevo);
                     if d["estadoDocumento"] == "APROBADO" {
                         d["estadoDocumento"] = json!("EN_REVISION");
@@ -598,6 +804,61 @@ mod tests {
         assert_eq!(r[3]["fechaFin"], "2026-10-05");
         assert!(aplicar_ops("cronograma", actual, &json!([{ "op": "desplazar", "dias": 0 }])).is_err());
         assert!(aplicar_ops("cronograma", actual, &json!([{ "op": "desplazar", "dias": 2, "desdeId": "nada" }])).is_err());
+    }
+
+    #[test]
+    fn el_cronograma_se_reestructura_con_propuestas() {
+        let base = r#"[{"id":"a","fase":"Diseño","fechaInicio":"2026-11-01","fechaFin":"2026-11-10","estado":"PENDIENTE"},{"id":"b","fase":"QA","fechaInicio":"2026-11-10","fechaFin":"2026-11-20","estado":"PENDIENTE","dependeDe":"a"}]"#;
+        let ops = json!([{ "op": "agregar_fase", "valor": { "fase": "Despliegue", "fechaInicio": "2026-11-20", "fechaFin": "2026-11-25", "dependeDe": "b" } }]);
+        let r: Value = serde_json::from_str(&aplicar_ops("cronograma", base, &ops).unwrap()).unwrap();
+        assert_eq!(r.as_array().unwrap().len(), 3);
+        assert_eq!(r[2]["fase"], "Despliegue");
+        assert!(r[2]["id"].is_string() && r[2]["estado"] == "PENDIENTE");
+        // editar: fechas y dependencia
+        let ops = json!([{ "op": "editar_fase", "id": "b", "cambios": { "fase": "Pruebas", "fechaFin": "2026-11-30", "estado": "EN_CURSO" } }]);
+        let r: Value = serde_json::from_str(&aplicar_ops("cronograma", base, &ops).unwrap()).unwrap();
+        assert_eq!((r[1]["fase"].as_str(), r[1]["fechaFin"].as_str(), r[1]["estado"].as_str()), (Some("Pruebas"), Some("2026-11-30"), Some("EN_CURSO")));
+        // quitar: lo que dependía de la quitada pasa a depender de la anterior
+        let tres = r#"[{"id":"a","fase":"A","fechaInicio":"2026-11-01","fechaFin":"2026-11-02"},{"id":"b","fase":"B","fechaInicio":"2026-11-02","fechaFin":"2026-11-03","dependeDe":"a"},{"id":"c","fase":"C","fechaInicio":"2026-11-03","fechaFin":"2026-11-04","dependeDe":"b"}]"#;
+        let r: Value = serde_json::from_str(&aplicar_ops("cronograma", tres, &json!([{ "op": "quitar_fase", "id": "b" }])).unwrap()).unwrap();
+        assert_eq!(r.as_array().unwrap().len(), 2);
+        assert_eq!(r[1]["dependeDe"], "a");
+        // un cronograma vacío admite fases nuevas
+        assert!(aplicar_ops("cronograma", "", &json!([{ "op": "agregar_fase", "valor": { "fase": "Primera", "fechaInicio": "2026-12-01", "fechaFin": "2026-12-05" } }])).is_ok());
+        // rechazos
+        for mal in [
+            json!([{ "op": "agregar_fase", "valor": { "fase": "X", "fechaInicio": "2026-11-20", "fechaFin": "2026-11-10" } }]),
+            json!([{ "op": "agregar_fase", "valor": { "fase": "X", "fechaInicio": "mañana", "fechaFin": "2026-11-10" } }]),
+            json!([{ "op": "agregar_fase", "valor": { "fase": "X", "fechaInicio": "2026-11-01", "fechaFin": "2026-11-10", "dependeDe": "zzz" } }]),
+            json!([{ "op": "editar_fase", "id": "zzz", "cambios": { "fase": "X" } }]),
+            json!([{ "op": "editar_fase", "id": "a", "cambios": { "dependeDe": "a" } }]),
+            json!([{ "op": "quitar_fase", "id": "zzz" }]),
+            json!([{ "op": "borrar_todo" }]),
+        ] {
+            assert!(aplicar_ops("cronograma", base, &mal).is_err(), "{mal}");
+        }
+        assert!(validar_forma("cronograma", &json!([{ "op": "quitar_fase", "id": "a" }])).is_ok());
+        assert!(validar_forma("cronograma", &json!([{ "op": "borrar_todo" }])).is_err());
+    }
+
+    #[test]
+    fn el_plan_de_ejecucion_admite_propuestas_acotadas() {
+        let ops = json!([
+            { "op": "agregar", "ruta": "ambientes", "valor": { "ambiente": "Staging", "proposito": "Pruebas previas", "despliega": "Motor", "promocion": "PR revisado", "extra": "se ignora" } },
+            { "op": "agregar", "ruta": "raci", "valor": { "actividad": "Aprobar el alcance", "responsable": "Marta", "aprueba": "Dirección" } },
+            { "op": "establecer", "ruta": "qa", "valor": "Cada tarea de código se prueba antes de integrarse." },
+        ]);
+        let r: Value = serde_json::from_str(&aplicar_ops("planEjecucion", r#"{"estadoDocumento":"BORRADOR","qa":""}"#, &ops).unwrap()).unwrap();
+        assert_eq!(r["ambientes"][0]["ambiente"], "Staging");
+        assert!(r["ambientes"][0].get("extra").is_none(), "solo los campos conocidos");
+        assert_eq!(r["raci"][0]["responsable"], "Marta");
+        assert_eq!(r["qa"], "Cada tarea de código se prueba antes de integrarse.");
+        assert_eq!(r["estadoDocumento"], "BORRADOR", "no toca el estado del documento");
+        assert!(aplicar_ops("planEjecucion", "{}", &json!([{ "op": "agregar", "ruta": "estadoDocumento", "valor": { "x": "y" } }])).is_err());
+        assert!(aplicar_ops("planEjecucion", "{}", &json!([{ "op": "agregar", "ruta": "raci", "valor": { "responsable": "sin actividad" } }])).is_err(), "falta el dato principal");
+        assert!(aplicar_ops("planEjecucion", "{}", &json!([{ "op": "establecer", "ruta": "estadoDocumento", "valor": "APROBADO" }])).is_err(), "no se puede aprobar por propuesta");
+        assert!(validar_forma("planEjecucion", &json!([{ "op": "establecer", "ruta": "qa", "valor": "x" }])).is_ok());
+        assert!(validar_forma("planEjecucion", &json!([{ "op": "establecer", "ruta": "qa", "valor": { "a": 1 } }])).is_err());
     }
 
     #[test]

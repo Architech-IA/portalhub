@@ -30,6 +30,7 @@ pub mod prospecting;
 pub mod realtime;
 pub mod prospeccion;
 pub mod proyectos;
+pub mod seguimiento;
 pub mod triggers;
 pub mod solucion_hub;
 pub mod soluciones_ia;
@@ -56,6 +57,7 @@ pub fn router() -> Router<AppState> {
         .merge(council::router())
         .merge(prospeccion::router())
         .merge(proyectos::router())
+        .merge(seguimiento::router())
         .merge(agentes::router())
         .merge(triggers::router())
         .merge(soluciones_ia::router())

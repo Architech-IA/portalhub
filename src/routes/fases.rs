@@ -399,6 +399,8 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                                 "taskCode": fila.map(|x| x["taskCode"].clone()).unwrap_or(Value::Null),
                                 "status": fila.map(|x| x["status"].clone()).unwrap_or(Value::Null),
                                 "assigneeName": fila.map(|x| x["assigneeName"].clone()).unwrap_or(Value::Null),
+                                "entregable": entregable_de_actividad(ctx["plantilla"].as_str().unwrap_or(""), clave, t)
+                                    .and_then(|e| req.iter().find(|r| r["clave"] == e.as_str()).map(|r| json!({ "clave": r["clave"], "titulo": r["titulo"], "ok": r["ok"] }))),
                             })
                         })
                         .collect()
@@ -668,10 +670,33 @@ async fn notificar_admins(st: &AppState, sol: &str, titulo: &str, mensaje: &str)
 }
 
 /// Crea en el Backlog las tareas de la fase (una vez: la tabla `FaseActividad` lo garantiza).
+/// Entregable que una actividad ayuda a cumplir: el de su copia congelada o, si no lo trae, el de la plantilla vigente.
+fn entregable_de_actividad(plantilla: &str, fase: &str, act: &Value) -> Option<String> {
+    let propio = act["entregable"].as_str().filter(|e| !e.is_empty()).map(String::from);
+    propio.or_else(|| {
+        let k = act["clave"].as_str()?;
+        lista(plantilla_por_codigo(plantilla))
+            .iter()
+            .find(|f| f["clave"] == fase)
+            .and_then(|f| f["actividades"].as_array())
+            .and_then(|a| a.iter().find(|x| x["clave"] == k))
+            .and_then(|x| x["entregable"].as_str())
+            .filter(|e| !e.is_empty())
+            .map(String::from)
+    })
+}
+
+/// Título y descripción con los que se crea la tarea del Backlog de una actividad de fase. También sirve para reconocer, al editar la plantilla,
+/// las tareas que nadie ha tocado (su texto sigue siendo exactamente el generado).
+pub(super) fn texto_tarea(f: &Value, act: &Value) -> (String, String) {
+    let prefijo = format!("[Fase {} · {}]", f["numero"], f["nombre"].as_str().unwrap_or_default());
+    let quien = if act["tipo"] == "AGENTE" { "Actividad para un agente: se ejecuta desde Oficina, en el Motor." } else { "Actividad humana: la realiza una persona del equipo." };
+    (format!("{prefijo} {}", act["titulo"].as_str().unwrap_or_default()), format!("{}\n\n{quien}", act["descripcion"].as_str().unwrap_or_default()))
+}
+
 async fn crear_actividades(st: &AppState, sol: &str, def: &Value, idx: usize) {
     let Some(f) = lista(def).get(idx) else { return };
     let fase = f["clave"].as_str().unwrap_or_default();
-    let prefijo = format!("[Fase {} · {}]", f["numero"], f["nombre"].as_str().unwrap_or_default());
     for act in f["actividades"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
         let clave = act["clave"].as_str().unwrap_or_default();
         let item_id = new_id();
@@ -694,19 +719,14 @@ async fn crear_actividades(st: &AppState, sol: &str, def: &Value, idx: usize) {
             .await
             .ok()
             .flatten();
-        let quien = if act["tipo"] == "AGENTE" {
-            "Actividad para un agente: se ejecuta desde Oficina, en el Motor."
-        } else {
-            "Actividad humana: la realiza una persona del equipo."
-        };
-        let descripcion = format!("{}\n\n{quien}", act["descripcion"].as_str().unwrap_or_default());
+        let (titulo_tarea, descripcion) = texto_tarea(f, act);
         let r = exec(
             &st.pool,
             r#"INSERT INTO "BacklogItem" (id, title, description, type, priority, status, "solucionId", "areaId", "createdAt", "updatedAt")
                VALUES ($1, $2, $3, $4, $5, 'BACKLOG', $6, $7, NOW(), NOW())"#,
             &[
                 B::T(item_id),
-                B::T(format!("{prefijo} {}", act["titulo"].as_str().unwrap_or_default())),
+                B::T(titulo_tarea),
                 B::T(descripcion),
                 B::T(act["backlogType"].as_str().unwrap_or("TASK").into()),
                 B::T(act["prioridad"].as_str().unwrap_or("MEDIUM").into()),
@@ -1120,6 +1140,29 @@ async fn entregable(State(st): State<AppState>, se: Session, Path(id): Path<Stri
     todos[actual][clave.as_str()] = if ok { json!({ "ok": true, "por": a.nombre, "en": ahora(&st).await, "evidencia": evidencia }) } else { json!({ "ok": false, "por": null, "en": null, "evidencia": evidencia }) };
     exec(&st.pool, r#"UPDATE "ProyectoFase" SET entregables = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id), B::J(todos)]).await?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Marca como listo un entregable manual de la fase actual con la evidencia dada (la usa el archivo generado ya revisado por una persona).
+pub(super) async fn marcar_entregable(st: &AppState, id: &str, fase: &str, clave: &str, quien: &str, evidencia: String) -> Result<(), ApiError> {
+    let est = cargar_iniciado(st, id).await?;
+    exigir_en_curso(&est)?;
+    if est["faseActual"].as_str() != Some(fase) {
+        return Err(ApiError::bad_request("Solo se marcan los entregables de la fase actual: este borrador es de otra fase"));
+    }
+    let r = requeridos_de_fase(est["plantilla"].as_str().unwrap_or(""), fase).into_iter().find(|r| r["clave"] == clave).ok_or_else(|| ApiError::bad_request("Ese entregable ya no existe en esta fase"))?;
+    if r["verifica"]["tipo"] != "manual" {
+        return Err(ApiError::bad_request("Este entregable se verifica solo, con lo que hay en el sistema"));
+    }
+    let mut todos = est["entregables"].clone();
+    if !todos.is_object() {
+        todos = json!({});
+    }
+    if !todos[fase].is_object() {
+        todos[fase] = json!({});
+    }
+    todos[fase][clave] = json!({ "ok": true, "por": quien, "en": ahora(st).await, "evidencia": evidencia });
+    exec(&st.pool, r#"UPDATE "ProyectoFase" SET entregables = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id.into()), B::J(todos)]).await?;
+    Ok(())
 }
 
 async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {

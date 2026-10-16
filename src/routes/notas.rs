@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/proyectos/{id}/notas", get(listar))
         .route("/api/proyectos/{id}/notas/{fase}", axum::routing::put(guardar))
+        .route("/api/proyectos/{id}/notas/{fase}/agregar", post(agregar))
         .route("/api/proyectos/{id}/archivos-nota", post(subir))
         .route("/api/proyectos/{id}/archivos-nota/{aid}", get(bajar).delete(quitar))
         .route("/api/leads/{id}/proyecto", get(proyecto_de_lead))
@@ -80,6 +81,70 @@ async fn guardar(State(st): State<AppState>, se: Session, Path((id, fase)): Path
     let q = quien(&se);
     asegurar_nota(&st, &id, &fase, &q).await?;
     exec(&st.pool, r#"UPDATE "ProyectoNota" SET contenido = $3, "actualizadoPor" = $4, "updatedAt" = NOW() WHERE "solucionId" = $1 AND fase = $2"#, &[B::T(id), B::T(fase), B::T(contenido.into()), B::T(q)]).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+fn escapar(t: &str) -> String {
+    t.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// Texto plano (párrafos separados por línea en blanco, viñetas con «- ») a HTML simple y escapado.
+fn texto_a_html(t: &str) -> String {
+    let mut out = String::new();
+    let mut en_lista = false;
+    for linea in t.lines() {
+        let l = linea.trim();
+        if let Some(item) = l.strip_prefix("- ").or_else(|| l.strip_prefix("• ")).or_else(|| l.strip_prefix("* ")) {
+            if !en_lista {
+                out.push_str("<ul>");
+                en_lista = true;
+            }
+            out.push_str(&format!("<li>{}</li>", escapar(item.trim())));
+            continue;
+        }
+        if en_lista {
+            out.push_str("</ul>");
+            en_lista = false;
+        }
+        if !l.is_empty() {
+            out.push_str(&format!("<p>{}</p>", escapar(l)));
+        }
+    }
+    if en_lista {
+        out.push_str("</ul>");
+    }
+    out
+}
+
+/// Agrega a la nota de la fase una pestaña nueva con el texto dado. Nunca reemplaza lo que ya hay.
+pub(crate) async fn agregar_pestana(st: &AppState, id: &str, fase: &str, titulo: &str, texto: &str, quien: &str) -> Result<(), ApiError> {
+    existe(st, id).await?;
+    if !fase_valida(fase) {
+        return Err(ApiError::bad_request("Fase inválida"));
+    }
+    let texto = texto.trim();
+    if texto.is_empty() {
+        return Err(ApiError::bad_request("Falta el texto de la nota"));
+    }
+    let titulo: String = Some(titulo.trim()).filter(|t| !t.is_empty()).unwrap_or("Nota de la sesión").chars().take(60).collect();
+    asegurar_nota(st, id, fase, quien).await?;
+    let actual = fetch_text_opt(&st.pool, r#"SELECT contenido FROM "ProyectoNota" WHERE "solucionId" = $1 AND fase = $2"#, &[B::T(id.into()), B::T(fase.into())]).await?.unwrap_or_default();
+    let mut tabs: Vec<Value> = match serde_json::from_str::<Value>(&actual) {
+        Ok(v) if v["tabs"].is_array() => v["tabs"].as_array().cloned().unwrap_or_default(),
+        _ if actual.trim().is_empty() => vec![],
+        _ => vec![json!({ "id": new_id(), "name": "General", "content": actual })],
+    };
+    tabs.push(json!({ "id": new_id(), "name": titulo, "content": texto_a_html(texto) }));
+    let nuevo = json!({ "tabs": tabs }).to_string();
+    if nuevo.len() > MAX_TEXTO {
+        return Err(ApiError::bad_request("La nota de la fase ya es demasiado larga para agregarle más"));
+    }
+    exec(&st.pool, r#"UPDATE "ProyectoNota" SET contenido = $3, "actualizadoPor" = $4, "updatedAt" = NOW() WHERE "solucionId" = $1 AND fase = $2"#, &[B::T(id.into()), B::T(fase.into()), B::T(nuevo), B::T(quien.into())]).await?;
+    Ok(())
+}
+
+async fn agregar(State(st): State<AppState>, se: Session, Path((id, fase)): Path<(String, String)>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+    agregar_pestana(&st, &id, &fase, body["titulo"].as_str().unwrap_or(""), body["texto"].as_str().unwrap_or(""), &quien(&se)).await?;
     Ok(Json(json!({ "ok": true })))
 }
 

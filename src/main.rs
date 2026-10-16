@@ -4,6 +4,7 @@ mod extract;
 mod google;
 mod llm;
 mod motor;
+mod ofimatica;
 mod proxy;
 mod routes;
 mod session;
@@ -104,6 +105,11 @@ async fn main() {
     let state = AppState { pool, cfg: cfg.clone(), http };
     // Las plantillas de fases con los ajustes del editor (si los hay).
     routes::plantillas::cargar_efectivas(&state).await;
+    if !modo_motor {
+        routes::seguimiento::iniciar(state.clone());
+    } else {
+        motor::dev::iniciar_limpieza();
+    }
 
     let app = if modo_motor {
         Router::new().merge(motor::router(state.clone())).layer(DefaultBodyLimit::max(40 * 1024 * 1024)).with_state(state)

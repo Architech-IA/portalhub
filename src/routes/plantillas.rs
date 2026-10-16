@@ -25,7 +25,7 @@ use crate::{
     error::{ApiError, ApiResult},
     session::Session,
     state::AppState,
-    util::{exec, fetch_json, fetch_json_opt, new_id, B},
+    util::{exec, fetch_json, fetch_json_opt, fetch_text_opt, new_id, B},
 };
 
 pub const COMERCIAL: &str = "PROYECTO_COMPLETO";
@@ -36,6 +36,8 @@ const TIPOS_VERIFICACION: [&str; 11] = ["nota_lead", "reunion_lead", "documento"
 const ROLES_FICHA: [&str; 3] = ["DECISOR", "REPRESENTANTE_LEGAL", "FIRMANTE"];
 const TIPOS_SESION: [&str; 4] = ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"];
 const ARTEFACTOS: [&str; 13] = ["prd", "diseno", "plan-ejec", "plan", "arquitectura", "diagramas", "cronograma", "riesgos", "cumplimiento", "cambios", "revision", "entrega", "codigo"];
+const TIPOS_TAREA: [&str; 7] = ["TASK", "FEATURE", "IMPROVEMENT", "DOCUMENTACION", "TEST_QA", "INFRAESTRUCTURA", "DESARROLLO"];
+const PRIORIDADES: [&str; 4] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const ESTADOS_PROPUESTA: [&str; 5] = ["DRAFT", "SENT", "UNDER_REVIEW", "ACCEPTED", "REJECTED"];
 const DOCUMENTOS: [&str; 3] = ["prd", "diseno", "plan"];
 /// Formatos que puede esperar un entregable que marca una persona. Los automáticos llevan el de su verificación.
@@ -106,7 +108,7 @@ pub fn aplicar_ajustes(base: &Value, ajustes: &Value) -> Value {
         for f in fases.iter_mut() {
             let clave = f["clave"].as_str().unwrap_or_default().to_string();
             let Some(a) = ajustes.get(&clave).filter(|a| a.is_object()) else { continue };
-            for k in ["objetivo", "entregables", "requeridos", "sesiones"] {
+            for k in ["objetivo", "entregables", "requeridos", "sesiones", "actividades"] {
                 if let Some(v) = a.get(k) {
                     f[k] = v.clone();
                 }
@@ -119,6 +121,22 @@ pub fn aplicar_ajustes(base: &Value, ajustes: &Value) -> Value {
             }
         }
     }
+    // Una actividad no puede apuntar a un entregable que ya no existe en su fase: el vínculo se suelta solo
+    if let Some(fases) = out["fases"].as_array_mut() {
+        for f in fases.iter_mut() {
+            let claves: Vec<String> = f["requeridos"].as_array().map(|a| a.iter().filter_map(|r| r["clave"].as_str().map(String::from)).collect()).unwrap_or_default();
+            if let Some(acts) = f["actividades"].as_array_mut() {
+                for a in acts.iter_mut() {
+                    let huerfano = a["entregable"].as_str().map(|e| !claves.iter().any(|c| c == e)).unwrap_or(false);
+                    if huerfano {
+                        if let Some(o) = a.as_object_mut() {
+                            o.remove("entregable");
+                        }
+                    }
+                }
+            }
+        }
+    }
     out
 }
 
@@ -128,6 +146,7 @@ fn editable(f: &Value) -> Value {
         "clave": f["clave"], "numero": f["numero"], "bloque": f["bloque"], "nombre": f["nombre"], "leadStatus": f["leadStatus"], "tipoPuerta": f["puerta"]["tipo"],
         "objetivo": f["objetivo"], "aprobador": f["puerta"]["aprobador"], "criterios": f["puerta"]["criterios"],
         "entregables": f["entregables"], "requeridos": f["requeridos"].as_array().cloned().unwrap_or_default(), "sesiones": f["sesiones"].as_array().cloned().unwrap_or_default(),
+        "actividades": f["actividades"].as_array().cloned().unwrap_or_default(),
     })
 }
 
@@ -240,7 +259,7 @@ fn limpiar_fase(f: &Value, a: &Value, comercial: bool, aprobadores: &[String]) -
     let mut o = Map::new();
     let obj = a.as_object().ok_or_else(|| format!("{clave}: ajustes inválidos"))?;
     for k in obj.keys() {
-        if !["objetivo", "aprobador", "criterios", "entregables", "requeridos", "sesiones"].contains(&k.as_str()) {
+        if !["objetivo", "aprobador", "criterios", "entregables", "requeridos", "sesiones", "actividades"].contains(&k.as_str()) {
             return Err(format!("{clave}: no se puede editar «{k}»"));
         }
     }
@@ -323,6 +342,50 @@ fn limpiar_fase(f: &Value, a: &Value, comercial: bool, aprobadores: &[String]) -
         }
         o.insert("sesiones".into(), Value::Array(out));
     }
+    if let Some(v) = obj.get("actividades") {
+        let a = v.as_array().ok_or_else(|| format!("{clave}: actividades debe ser una lista"))?;
+        if a.is_empty() || a.len() > 6 {
+            return Err(format!("{clave}: cada fase debe tener entre 1 y 6 actividades"));
+        }
+        let mut claves: Vec<String> = Vec::new();
+        let mut out = Vec::new();
+        for (i, r) in a.iter().enumerate() {
+            let donde = format!("{clave}: actividad {}", i + 1);
+            let c = clave_valida(&r["clave"], &donde)?;
+            if claves.contains(&c) {
+                return Err(format!("{donde}: clave repetida «{c}»"));
+            }
+            claves.push(c.clone());
+            let tipo = r["tipo"].as_str().unwrap_or_default();
+            if tipo != "AGENTE" && tipo != "HUMANA" {
+                return Err(format!("{donde}: debe ser de un agente o de una persona"));
+            }
+            let (bt, pr) = (r["backlogType"].as_str().unwrap_or_default(), r["prioridad"].as_str().unwrap_or_default());
+            if !TIPOS_TAREA.contains(&bt) {
+                return Err(format!("{donde}: tipo de tarea desconocido"));
+            }
+            if !PRIORIDADES.contains(&pr) {
+                return Err(format!("{donde}: prioridad desconocida"));
+            }
+            let mut item = json!({
+                "clave": c, "titulo": texto(&r["titulo"], 3, 200, &format!("{donde}: título"))?, "tipo": tipo, "area": texto(&r["area"], 2, 60, &format!("{donde}: área"))?,
+                "backlogType": bt, "prioridad": pr, "descripcion": texto(&r["descripcion"], 5, 1000, &format!("{donde}: descripción"))?,
+            });
+            // Entregable que esta actividad ayuda a cumplir (opcional): debe existir entre los de la fase
+            if let Some(e) = r["entregable"].as_str().map(str::trim).filter(|e| !e.is_empty()) {
+                let de_la_fase: Vec<String> = match obj.get("requeridos") {
+                    Some(rq) => rq.as_array().map(|x| x.iter().filter_map(|y| y["clave"].as_str().map(String::from)).collect()).unwrap_or_default(),
+                    None => f["requeridos"].as_array().map(|x| x.iter().filter_map(|y| y["clave"].as_str().map(String::from)).collect()).unwrap_or_default(),
+                };
+                if !de_la_fase.iter().any(|c| c == e) {
+                    return Err(format!("{donde}: el entregable «{e}» no existe en esta fase"));
+                }
+                item["entregable"] = json!(e);
+            }
+            out.push(item);
+        }
+        o.insert("actividades".into(), Value::Array(out));
+    }
     Ok(Value::Object(o))
 }
 
@@ -382,6 +445,10 @@ pub fn propagar_a_definicion(def: &mut Value, criterios: &mut Value, nueva: &Val
             fv["puerta"]["aprobador"] = fn_["puerta"]["aprobador"].clone();
             cambio = true;
         }
+        if fv["actividades"] != fn_["actividades"] {
+            fv["actividades"] = fn_["actividades"].clone();
+            cambio = true;
+        }
         if viejos != nuevos {
             fv["puerta"]["criterios"] = Value::Array(nuevos.clone());
             if let Some(m) = criterios.get(&clave).and_then(|m| m.as_array()).cloned() {
@@ -398,22 +465,55 @@ async fn ajustes_guardados(st: &AppState, codigo: &str) -> Result<Value, ApiErro
     Ok(fetch_json_opt(&st.pool, r#"SELECT fases FROM "PlantillaFasesAjuste" WHERE codigo = $1"#, &[B::T(codigo.into())]).await?.unwrap_or_else(|| json!({})))
 }
 
-async fn propagar(st: &AppState, codigo: &str, nueva: &Value) -> Result<usize, ApiError> {
+/// Actualiza las tareas del Backlog de las actividades que cambiaron, SOLO si siguen en cola y su texto es exactamente el que generó la plantilla
+/// anterior (nadie las empezó ni las editó). Devuelve cuántas tareas se actualizaron.
+async fn sincronizar_tareas(st: &AppState, sol: &str, anterior: &Value, nuevo: &Value) -> usize {
+    let mut total = 0;
+    for fn_ in lista(nuevo) {
+        let fase = fn_["clave"].as_str().unwrap_or_default();
+        let Some(fv) = lista(anterior).iter().find(|f| f["clave"] == fase) else { continue };
+        for act_n in fn_["actividades"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            let k = act_n["clave"].as_str().unwrap_or_default();
+            let Some(act_v) = fv["actividades"].as_array().and_then(|a| a.iter().find(|x| x["clave"] == k)) else { continue };
+            if act_v == act_n {
+                continue;
+            }
+            let Some(item) = fetch_text_opt(&st.pool, r#"SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3"#, &[B::T(sol.into()), B::T(fase.into()), B::T(k.into())]).await.ok().flatten() else { continue };
+            let ((t_v, d_v), (t_n, d_n)) = (super::fases::texto_tarea(fv, act_v), super::fases::texto_tarea(fn_, act_n));
+            let area = fetch_text_opt(&st.pool, r#"SELECT id FROM "Area" WHERE name = $1"#, &[B::T(act_n["area"].as_str().unwrap_or_default().into())]).await.ok().flatten();
+            let n = exec(
+                &st.pool,
+                r#"UPDATE "BacklogItem" SET title = $2, description = $3, type = $4, priority = $5, "areaId" = COALESCE($6, "areaId"), "updatedAt" = NOW() WHERE id = $1 AND status = 'BACKLOG' AND title = $7 AND description = $8"#,
+                &[B::T(item), B::T(t_n), B::T(d_n), B::T(act_n["backlogType"].as_str().unwrap_or("TASK").into()), B::T(act_n["prioridad"].as_str().unwrap_or("MEDIUM").into()), B::OT(area), B::T(t_v), B::T(d_v)],
+            )
+            .await
+            .unwrap_or(0);
+            total += n as usize;
+        }
+    }
+    total
+}
+
+async fn propagar(st: &AppState, codigo: &str, nueva: &Value, actualizar_tareas: bool) -> Result<(usize, usize), ApiError> {
     let filas = fetch_json(
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', "solucionId", 'def', definicion, 'criterios', criterios)), '[]'::jsonb) FROM "ProyectoFase" WHERE plantilla = $1"#,
         &[B::T(codigo.into())],
     )
     .await?;
-    let mut n = 0;
+    let (mut n, mut tareas) = (0, 0);
     for fila in filas.as_array().cloned().unwrap_or_default() {
         let (mut def, mut crit) = (fila["def"].clone(), fila["criterios"].clone());
+        let anterior = def.clone();
         if propagar_a_definicion(&mut def, &mut crit, nueva) {
+            if actualizar_tareas {
+                tareas += sincronizar_tareas(st, fila["id"].as_str().unwrap_or_default(), &anterior, &def).await;
+            }
             exec(&st.pool, r#"UPDATE "ProyectoFase" SET definicion = $2, criterios = $3, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(fila["id"].as_str().unwrap_or_default().into()), B::J(def), B::J(crit)]).await?;
             n += 1;
         }
     }
-    Ok(n)
+    Ok((n, tareas))
 }
 
 async fn vista_de(st: &AppState, codigo: &str) -> Result<Value, ApiError> {
@@ -439,6 +539,7 @@ fn catalogo() -> Value {
     json!({
         "aprobadores": aprobadores_validos(), "tiposVerificacion": TIPOS_VERIFICACION, "tiposSesion": TIPOS_SESION, "artefactos": ARTEFACTOS,
         "estadosPropuesta": ESTADOS_PROPUESTA, "documentos": DOCUMENTOS, "formatosManuales": FORMATOS_MANUALES, "rolesFicha": ROLES_FICHA,
+        "tiposTarea": TIPOS_TAREA, "prioridades": PRIORIDADES,
     })
 }
 
@@ -447,7 +548,9 @@ async fn listar(State(st): State<AppState>, se: Session) -> ApiResult<Json<Value
     for c in [COMERCIAL, INTERNA] {
         plantillas.push(vista_de(&st, c).await?);
     }
-    Ok(Json(json!({ "puedeEditar": se.is_admin() || se.is_service, "catalogo": catalogo(), "plantillas": plantillas })))
+    let mut cat = catalogo();
+    cat["areas"] = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(name ORDER BY name), '[]'::jsonb) FROM "Area""#, &[]).await?;
+    Ok(Json(json!({ "puedeEditar": se.is_admin() || se.is_service, "catalogo": cat, "plantillas": plantillas })))
 }
 
 fn exigir_admin(se: &Session) -> Result<String, ApiError> {
@@ -463,7 +566,7 @@ fn codigo_valido(c: &str) -> Result<&'static str, ApiError> {
 }
 
 /// Guarda ajustes ya validados: queda el historial, se actualiza la plantilla en memoria y se propaga a los proyectos iniciados.
-async fn aplicar(st: &AppState, codigo: &str, ajustes: Value, merged: Value, nota: Option<String>, quien: &str) -> Result<usize, ApiError> {
+async fn aplicar(st: &AppState, codigo: &str, ajustes: Value, merged: Value, nota: Option<String>, quien: &str, actualizar_tareas: bool) -> Result<(usize, usize), ApiError> {
     let version = fetch_json_opt(&st.pool, r#"SELECT to_jsonb(version) FROM "PlantillaFasesAjuste" WHERE codigo = $1"#, &[B::T(codigo.into())]).await?.and_then(|v| v.as_i64()).unwrap_or(0) + 1;
     exec(
         &st.pool,
@@ -479,7 +582,7 @@ async fn aplicar(st: &AppState, codigo: &str, ajustes: Value, merged: Value, not
     )
     .await?;
     publicar(codigo, merged.clone());
-    propagar(st, codigo, &merged).await
+    propagar(st, codigo, &merged, actualizar_tareas).await
 }
 
 async fn guardar(State(st): State<AppState>, se: Session, Path(codigo): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
@@ -495,8 +598,18 @@ async fn guardar(State(st): State<AppState>, se: Session, Path(codigo): Path<Str
     }
     let (limpio, merged) = validar_ajustes(codigo, &ajustes).map_err(ApiError::bad_request)?;
     let nota = body["nota"].as_str().map(str::trim).filter(|n| !n.is_empty()).map(|n| n.chars().take(300).collect::<String>());
-    let proyectos = aplicar(&st, codigo, limpio, merged, nota, &quien).await?;
-    Ok(Json(json!({ "ok": true, "proyectosActualizados": proyectos, "plantilla": vista_de(&st, codigo).await? })))
+    // Las áreas de las actividades deben existir (de ahí sale el área de la tarea del Backlog)
+    let existentes = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(name), '[]'::jsonb) FROM "Area""#, &[]).await?;
+    let existentes: Vec<&str> = existentes.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+    for f in limpio.as_object().map(|o| o.values()).into_iter().flatten() {
+        for a in f["actividades"].as_array().map(|x| x.as_slice()).unwrap_or(&[]) {
+            if !existentes.contains(&a["area"].as_str().unwrap_or_default()) {
+                return Err(ApiError::bad_request(format!("El área «{}» no existe", a["area"].as_str().unwrap_or_default())));
+            }
+        }
+    }
+    let (proyectos, tareas) = aplicar(&st, codigo, limpio, merged, nota, &quien, body["actualizarTareas"] == true).await?;
+    Ok(Json(json!({ "ok": true, "proyectosActualizados": proyectos, "tareasActualizadas": tareas, "plantilla": vista_de(&st, codigo).await? })))
 }
 
 /// Vuelve a los valores de fábrica (`base: true`), a los de una fase (`fase`) o a una versión del historial (`historialId`).
@@ -521,8 +634,8 @@ async fn restaurar(State(st): State<AppState>, se: Session, Path(codigo): Path<S
     };
     let (limpio, merged) = validar_ajustes(codigo, &ajustes).map_err(ApiError::bad_request)?;
     // Al volver a la base, las fases sin ajuste se reescriben con los valores de fábrica en los proyectos iniciados.
-    let proyectos = aplicar(&st, codigo, limpio, merged, Some(nota), &quien).await?;
-    Ok(Json(json!({ "ok": true, "proyectosActualizados": proyectos, "plantilla": vista_de(&st, codigo).await? })))
+    let (proyectos, _) = aplicar(&st, codigo, limpio, merged, Some(nota), &quien, false).await?;
+    Ok(Json(json!({ "ok": true, "proyectosActualizados": proyectos, "tareasActualizadas": 0, "plantilla": vista_de(&st, codigo).await? })))
 }
 
 async fn historial(State(st): State<AppState>, _se: Session, Path(codigo): Path<String>) -> ApiResult<Json<Value>> {
@@ -601,6 +714,68 @@ mod tests {
     }
 
     #[test]
+    fn las_actividades_se_editan_con_reglas() {
+        let act = |extra: Value| {
+            let mut a = json!({ "clave": "mi_actividad", "titulo": "Hacer algo útil", "tipo": "AGENTE", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "HIGH", "descripcion": "Qué hay que hacer y cómo." });
+            for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+                a[k] = v;
+            }
+            a
+        };
+        let con = |acts: Vec<Value>| json!({ "diagnostico": { "actividades": acts } });
+        let (_, merged) = validar_ajustes(COMERCIAL, &con(vec![act(json!({}))])).unwrap();
+        let f = lista(&merged).iter().find(|f| f["clave"] == "diagnostico").unwrap();
+        assert_eq!(f["actividades"].as_array().unwrap().len(), 1);
+        assert_eq!(f["actividades"][0]["titulo"], "Hacer algo útil");
+        assert!(validar_ajustes(COMERCIAL, &con(vec![])).is_err(), "al menos una");
+        assert!(validar_ajustes(COMERCIAL, &con(vec![act(json!({ "tipo": "ROBOT" }))])).is_err());
+        assert!(validar_ajustes(COMERCIAL, &con(vec![act(json!({ "prioridad": "URGENTE" }))])).is_err());
+        assert!(validar_ajustes(COMERCIAL, &con(vec![act(json!({ "backlogType": "COSA" }))])).is_err());
+        assert!(validar_ajustes(COMERCIAL, &con(vec![act(json!({ "descripcion": "x" }))])).is_err());
+        assert!(validar_ajustes(COMERCIAL, &con(vec![act(json!({})), act(json!({}))])).is_err(), "clave repetida");
+        let siete: Vec<Value> = (0..7).map(|i| act(json!({ "clave": format!("act_{i}x") }))).collect();
+        assert!(validar_ajustes(COMERCIAL, &con(siete)).is_err(), "máximo 6");
+    }
+
+    #[test]
+    fn el_vinculo_actividad_entregable_se_valida_y_se_suelta_si_el_entregable_desaparece() {
+        let f = lista(base_de(COMERCIAL)).iter().find(|f| f["clave"] == "identificacion").unwrap();
+        // los vínculos de fábrica apuntan a entregables que existen
+        for c in [COMERCIAL, INTERNA] {
+            for f in lista(base_de(c)) {
+                let claves: Vec<&str> = f["requeridos"].as_array().unwrap().iter().filter_map(|r| r["clave"].as_str()).collect();
+                for a in f["actividades"].as_array().unwrap() {
+                    if let Some(e) = a["entregable"].as_str() {
+                        assert!(claves.contains(&e), "{c}/{}/{}: «{e}»", f["clave"], a["clave"]);
+                    }
+                }
+            }
+        }
+        assert_eq!(f["actividades"][0]["entregable"], "ficha_cliente");
+        let mut acts = f["actividades"].as_array().unwrap().clone();
+        acts[0]["entregable"] = json!("no_existe");
+        assert!(validar_ajustes(COMERCIAL, &json!({ "identificacion": { "actividades": acts.clone() } })).is_err(), "entregable inexistente");
+        acts[0]["entregable"] = json!("decision");
+        let (_, m) = validar_ajustes(COMERCIAL, &json!({ "identificacion": { "actividades": acts } })).unwrap();
+        assert_eq!(lista(&m)[0]["actividades"][0]["entregable"], "decision");
+        // si el entregable se quita de la fase, el vínculo de la actividad de fábrica se suelta solo (no bloquea guardar)
+        let solo_lead = f["requeridos"].as_array().unwrap().iter().filter(|r| r["clave"] == "lead_registrado").cloned().collect::<Vec<_>>();
+        let (_, m2) = validar_ajustes(COMERCIAL, &json!({ "identificacion": { "requeridos": solo_lead } })).unwrap();
+        assert!(lista(&m2)[0]["actividades"][0].get("entregable").is_none());
+    }
+
+    #[test]
+    fn el_texto_de_la_tarea_sale_de_un_solo_sitio() {
+        let f = lista(base_de(COMERCIAL)).iter().find(|f| f["clave"] == "identificacion").unwrap();
+        let act = &f["actividades"][0];
+        let (t, d) = super::super::fases::texto_tarea(f, act);
+        assert!(t.starts_with("[Fase 1 · Identificación]") && t.ends_with(act["titulo"].as_str().unwrap()));
+        assert!(d.contains("Actividad para un agente"));
+        let (_, d2) = super::super::fases::texto_tarea(f, &f["actividades"][1]);
+        assert!(d2.contains("Actividad humana"));
+    }
+
+    #[test]
     fn las_marcas_de_criterios_se_reubican_por_texto() {
         let viejos = vec![json!("A"), json!("B"), json!("C")];
         let marcas = vec![json!({ "ok": true, "por": "x", "en": "t" }), json!({ "ok": false, "por": null, "en": null }), json!({ "ok": true, "por": "y", "en": "t" })];
@@ -627,5 +802,11 @@ mod tests {
         assert_eq!(crit["contacto"][0]["ok"], false);
         // sin cambios no hay nada que guardar
         assert!(!propagar_a_definicion(&mut def, &mut crit, &merged));
+        // las actividades editadas también viajan a la copia congelada
+        let b = json!({ "contacto": { "actividades": [{ "clave": "nueva_act", "titulo": "Actividad nueva", "tipo": "HUMANA", "area": "Sales & Presales", "backlogType": "TASK", "prioridad": "MEDIUM", "descripcion": "Descripción nueva" }] } });
+        let (_, merged2) = validar_ajustes(COMERCIAL, &b).unwrap();
+        assert!(propagar_a_definicion(&mut def, &mut crit, &merged2));
+        let f = lista(&def).iter().find(|f| f["clave"] == "contacto").unwrap();
+        assert_eq!(f["actividades"][0]["clave"], "nueva_act");
     }
 }

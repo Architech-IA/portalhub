@@ -11,13 +11,18 @@ fn base() -> String {
 
 /// Llama a una ruta interna del motor con la clave interna.
 pub async fn llamar(st: &AppState, ruta: &str, cuerpo: Value) -> Result<Value, String> {
+    llamar_t(st, ruta, cuerpo, 120).await
+}
+
+/// Igual que `llamar`, con tiempo de espera en segundos (los comandos de una sesión de desarrollo pueden tardar minutos).
+pub async fn llamar_t(st: &AppState, ruta: &str, cuerpo: Value, segundos: u64) -> Result<Value, String> {
     let clave = st.cfg.internal_api_key.clone().unwrap_or_default();
     let r = st
         .http
         .post(format!("{}{ruta}", base()))
         .header("x-api-key", clave)
         .json(&cuerpo)
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(segundos))
         .send()
         .await
         .map_err(|e| format!("el motor no responde: {e}"))?;

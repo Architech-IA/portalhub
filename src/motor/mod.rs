@@ -7,6 +7,7 @@
 //! clave interna (`x-api-key`); sin ella todo responde 401.
 
 pub mod despliegue;
+pub mod dev;
 pub mod diseno;
 pub mod ejecutor;
 pub mod grafo;
@@ -32,6 +33,7 @@ use crate::{
 pub fn router(st: AppState) -> Router<AppState> {
     Router::new()
         .route("/health", get(|| async { Json(json!({ "status": "ok", "service": "portalhub-motor" })) }))
+        .route("/api/dev/{accion}", post(dev_accion))
         .route("/api/executor/dispatch", post(dispatch))
         .route("/api/executor/dispatch-chain", post(dispatch_chain))
         .route("/api/executor/complete", post(complete))
@@ -41,6 +43,8 @@ pub fn router(st: AppState) -> Router<AppState> {
         .route("/api/backlog/sprint/{sprint_id}/reactivate-blocked", post(reactivar_bloqueadas))
         .route("/api/backlog/sprints/{id}/approve", post(aprobar_sprint))
         .route("/api/proyectos/{id}/deploy", post(proyecto_deploy))
+        .route("/api/proyectos/{id}/deploy/revertir", post(proyecto_deploy_revertir))
+        .route("/api/proyectos/{id}/deploy/pruebas", post(proyecto_deploy_pruebas))
         .route("/api/proyectos/{id}/db", post(proyecto_db))
         .route("/api/proyectos/{id}/db/migrar", post(proyecto_migrar))
         .route("/api/proyectos/{id}/env", get(env_listar).post(env_guardar).delete(env_borrar))
@@ -82,6 +86,14 @@ fn lista_pg(ids: &[String]) -> String {
 }
 
 // ═══════════════════════════════ EJECUTOR ═══════════════════════════════
+/// Sesiones de desarrollo (espacio de trabajo por sesión, edición y ejecución en contenedor).
+async fn dev_accion(State(st): State<AppState>, Path(accion): Path<String>, Json(b): Json<Value>) -> Response {
+    match dev::manejar(&st, &accion, &b).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, e),
+    }
+}
+
 async fn dispatch(State(st): State<AppState>, Json(body): Json<Value>) -> Response {
     let Some(id) = texto(&body, "taskId") else { return json_err(StatusCode::BAD_REQUEST, "taskId required") };
     match ejecutor::despachar(&st, &id, None).await {
@@ -411,6 +423,21 @@ fn corto500(e: String) -> String {
 
 async fn proyecto_deploy(State(st): State<AppState>, Path(id): Path<String>) -> Response {
     match despliegue::desplegar(&st, &id).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
+    }
+}
+
+async fn proyecto_deploy_revertir(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    match despliegue::revertir(&st, &id).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
+    }
+}
+
+async fn proyecto_deploy_pruebas(State(st): State<AppState>, Path(id): Path<String>, Json(b): Json<Value>) -> Response {
+    let r = if b["retirar"] == true { despliegue::retirar_pruebas(&st, &id).await } else { despliegue::desplegar_pruebas(&st, &id, b["rama"].as_str().unwrap_or("main")).await };
+    match r {
         Ok(r) => Json(r).into_response(),
         Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
     }

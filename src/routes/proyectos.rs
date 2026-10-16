@@ -46,6 +46,17 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/sesiones/{sid}/mensajes/{mid}/reintentar", post(mensaje_reintentar))
         .route("/api/proyectos/{id}/sesiones/{sid}/cerrar", post(sesion_cerrar))
         .route("/api/proyectos/{id}/sesiones/{sid}/bifurcar", post(sesion_bifurcar))
+        .route("/api/proyectos/{id}/sesiones/{sid}/prd/proponer", post(prd_proponer))
+        .route("/api/proyectos/{id}/sesiones/{sid}/entregables/{clave}/generar", post(generados::generar))
+        .route("/api/proyectos/{id}/sesiones/{sid}/notas/proponer", post(generados::proponer_nota))
+        .route("/api/proyectos/{id}/sesiones/{sid}/dev/{accion}", post(ia::dev_publico))
+        .route("/api/proyectos/{id}/sesiones/{sid}/dev/captura/{nombre}", get(ia::dev_captura))
+        .route("/api/proyectos/{id}/variables-prueba", get(ia::variables_listar).put(ia::variables_guardar).delete(ia::variables_borrar))
+        .route("/api/proyectos/{id}/acciones-ia", get(ia::listar_acciones))
+        .route("/api/proyectos/{id}/acciones-ia/{aid}/decidir", post(ia::decidir_accion))
+        .route("/api/proyectos/{id}/entregables/archivos", get(generados::listar))
+        .route("/api/proyectos/{id}/entregables/archivos/{aid}/descargar", get(generados::descargar))
+        .route("/api/proyectos/{id}/entregables/archivos/{aid}/decidir", post(generados::decidir))
         .route("/api/proyectos/{id}/sesiones/{sid}/plan", post(plan_proponer))
         .route("/api/proyectos/{id}/sesiones/{sid}/plan/aplicar", post(plan_aplicar))
         .route("/api/proyectos/{id}/suscripciones", get(suscripciones_listar).post(suscripcion_crear))
@@ -98,6 +109,9 @@ async fn sesion_visible(st: &AppState, solucion_id: &str, sesion_id: &str, u: &U
     let fila = fetch_json_opt(&st.pool, r#"SELECT to_jsonb(s) FROM "ProyectoSesion" s WHERE s.id = $1 AND s."solucionId" = $2"#, &[B::T(sesion_id.into()), B::T(solucion_id.into())]).await?;
     Ok(fila.filter(|f| !(f["privada"] == true && f["creadaPorId"].as_str() != Some(u.id.as_str()))))
 }
+
+mod generados;
+mod ia;
 
 // ── Utilidades de texto ──────────────────────────────────────────────────────────────────────
 fn corta(t: &str, max: usize) -> String {
@@ -701,6 +715,13 @@ struct CtxHerr<'a> {
     solucion_id: &'a str,
     sesion_id: &'a str,
     usuario_id: &'a str,
+    /// Fase a la que está ligada la sesión (donde caen las notas).
+    fase: Option<&'a str>,
+    /// ¿En esta respuesta ya se consultó la web? Entonces hasta las notas esperan confirmación humana.
+    uso_web: &'a std::sync::atomic::AtomicBool,
+    puede_escribir: bool,
+    /// Sesión de DESARROLLO: tiene las herramientas dev_* (espacio de trabajo y ejecución).
+    desarrollo: bool,
 }
 
 async fn documento_texto(st: &AppState, solucion_id: &str, nombre: &str) -> Result<Option<String>, sqlx::Error> {
@@ -726,6 +747,9 @@ async fn ejecutar_herramienta(st: &AppState, nombre: &str, args_json: &str, c: &
             Err(_) => return "Error: los argumentos no son un JSON válido.".into(),
         }
     };
+    if let Some(r) = ia::ejecutar(st, nombre, &a, c).await {
+        return r;
+    }
     let txt = |k: &str| match &a[k] {
         Value::Null => String::new(),
         Value::String(x) => x.clone(),
@@ -1011,6 +1035,7 @@ fn por_tipo(tipo: &str) -> &'static str {
     match tipo {
         "PLANIFICACION" => "Tipo de sesión: PLANIFICACIÓN. Actúas como coordinador: ayudas a descomponer el trabajo en tareas concretas y verificables, con orden, dependencias y riesgos, sin repetir lo que ya existe en el backlog. Cuando el plan esté claro, sugiere a la persona pulsar «Convertir en tareas» para crearlas en el backlog.",
         "REVISION" => "Tipo de sesión: REVISIÓN. Revisas el estado del proyecto: avance real del backlog, completitud de PRD/diseño/plan, contradicciones entre documentos, riesgos e hitos. Entrega hallazgos priorizados (alto/medio/bajo) y acciones concretas.",
+        "DESARROLLO" => "Tipo de sesión: DESARROLLO. Eres un ingeniero de software que trabaja en el repositorio del proyecto, en una rama propia de esta sesión, con herramientas para leer, editar y probar el código.",
         "BITACORA" => "Tipo de sesión: BITÁCORA. Aquí se publica actividad automática del proyecto (cambios de backlog, documentos, informes). Ayuda a interpretar esas novedades y qué acciones toman.",
         _ => "Tipo de sesión: LIBRE. Conversación abierta sobre el proyecto.",
     }
@@ -1039,11 +1064,11 @@ async fn texto_del_rol(st: &AppState, se: &Value) -> Option<String> {
     let cierre: Vec<String> = se["cierre"].as_array().map(|a| a.iter().map(|c| format!("- [{}] {}", if c["ok"] == true { "x" } else { " " }, c["texto"].as_str().unwrap_or(""))).collect()).unwrap_or_default();
     let artefactos: Vec<&str> = r["artefactos"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
     let entregables = match super::fases::entregables_para_sesion(st, se["solucionId"].as_str()?, fase).await {
-        Some(t) => format!("\n\nENTREGABLES OBLIGATORIOS PARA CERRAR LA FASE (el sistema los verifica solo; no los das por hechos tú):\n{t}\nTu trabajo en esta sesión es producir o avanzar los entregables que faltan, empezando por los más cercanos al objetivo de tu rol. Al empezar, di cuáles faltan y por cuál vas. Cuando una respuesta tuya sirva para un entregable, dilo (por ejemplo «esto sirve para el entregable X») y señala dónde debe quedar guardado para que el sistema lo reconozca. No inventes datos: si falta información del cliente, pídela."),
+        Some(t) => { let extra = if t.contains("PRD") { " Si el PRD está entre los entregables que faltan: cuando la conversación tenga información suficiente, dile a la persona que pulse «Proponer PRD» en la sesión; así se genera el borrador con esta conversación y queda como propuesta en el artefacto PRD para que ella lo revise y acepte." } else { "" }; format!("\n\nENTREGABLES OBLIGATORIOS PARA CERRAR LA FASE (el sistema los verifica solo; no los das por hechos tú):\n{t}\nTu trabajo en esta sesión es producir o avanzar los entregables que faltan, empezando por los más cercanos al objetivo de tu rol. Al empezar, di cuáles faltan y por cuál vas. Cuando una respuesta tuya sirva para un entregable, dilo (por ejemplo «esto sirve para el entregable X») y señala dónde debe quedar guardado para que el sistema lo reconozca. No inventes datos: si falta información del cliente, pídela.{extra}") }
         None => String::new(),
     };
     Some(format!(
-        "ROL DE ESTA SESIÓN: «{}» (fase {fase}).\nObjetivo: {}\nResultado esperado: {}\nArtefactos que suele tocar: {}.\nLista de cierre (lo que debe quedar hecho):\n{}{entregables}\nMantén la conversación orientada a este objetivo. Cuando el avance lo permita, di qué puntos de la lista de cierre ya se cumplieron y cuáles faltan, y sugiere a la persona marcarlos o cerrar la sesión.",
+        "ROL DE ESTA SESIÓN: «{}» (fase {fase}).\nObjetivo: {}\nResultado esperado: {}\nArtefactos que suele tocar: {}.\nLista de cierre (lo que debe quedar hecho):\n{}{entregables}\nMantén la conversación orientada a este objetivo. Cuando salgan acuerdos, datos del cliente o decisiones que valga la pena conservar, sugiere a la persona pulsar «Guardar en notas» para dejarlos en las notas de la fase. Cuando el avance lo permita, di qué puntos de la lista de cierre ya se cumplieron y cuáles faltan, y sugiere a la persona marcarlos o cerrar la sesión.",
         r["titulo"].as_str().unwrap_or(""), r["objetivo"].as_str().unwrap_or(""), r["resultado"].as_str().unwrap_or(""), artefactos.join(", "), cierre.join("\n")
     ))
 }
@@ -1177,6 +1202,8 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
         let en_ventana: Vec<&Msg> = msgs.iter().filter(|m| m.orden >= ini).collect();
         let ultimo_usuario = msgs.iter().rev().find(|m| m.rol == "user");
         let solucion_id = s["solucionId"].as_str().unwrap_or("").to_string();
+        // Presupuesto de tokens: si la sesión o el proyecto ya lo agotó, no se sigue gastando
+        super::seguimiento::revisar_presupuesto(&st, &solucion_id, &sesion_id, 0).await?;
 
         let ctx = construir_contexto(&st, &solucion_id, Some(&s), &usuario_id, ultimo_usuario.map(|m| m.contenido.as_str())).await.map_err(|e| e.to_string())?.ok_or("El proyecto ya no existe.")?;
         let primer_mensaje = msgs.len() == 1;
@@ -1187,17 +1214,34 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
         if !recortadas.is_empty() {
             system.push_str(&format!("\n\nATENCIÓN: estas fuentes del contexto están recortadas u omitidas: {}. Si la pregunta puede depender de ellas, léelas con las herramientas ANTES de responder; no afirmes que un dato no existe sin haberlas revisado.", recortadas.join(", ")));
         }
+        let uso_web = ia::nuevo_uso_web();
+        let puede_escribir = ia::puede_escribir(&st, &solucion_id, &usuario_id).await;
+        let fase_sesion: Option<String> = s["faseClave"].as_str().map(String::from);
+        system.push_str(&ia::instrucciones(puede_escribir));
+        let es_dev = s["tipo"] == "DESARROLLO";
+        let dev_ok = es_dev && puede_escribir && ia::es_admin(&st, &usuario_id).await;
+        if es_dev {
+            system.push_str(&ia::instrucciones_dev(dev_ok));
+        }
         let mut conversacion: Vec<Value> = en_ventana.iter().map(|m| json!({ "role": m.rol, "content": m.contenido })).collect();
+        // Una sesión de desarrollo itera muchas veces (editar, probar, corregir): más rondas, más tiempo y respuestas más largas.
+        let (max_rondas, respuesta_max_ms) = if es_dev { (60usize, 45 * 60_000i64) } else { (MAX_RONDAS_HERRAMIENTAS, RESPUESTA_MAX_MS) };
         let max_tokens: u32 = std::env::var("PROYECTOS_MAX_TOKENS").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(3500);
+        let max_tokens = if es_dev { max_tokens.max(8000) } else { max_tokens };
         let sid = format!("proyecto-{sesion_id}");
         let mut herramientas: Vec<Value> = vec![];
         let mut uso = llm::Uso::default();
         let (mut salida, mut cortada, mut reintento_length) = (String::new(), false, false);
         let mut ronda = 0usize;
+        let mut tope = false;
         loop {
-            let restante = RESPUESTA_MAX_MS - ms(t0);
-            let sin_herr = ronda >= MAX_RONDAS_HERRAMIENTAS || restante < 60_000 || reintento_length;
-            if ronda > 0 && ronda == MAX_RONDAS_HERRAMIENTAS && !herramientas.is_empty() {
+            let restante = respuesta_max_ms - ms(t0);
+            if !tope && ronda > 0 && super::seguimiento::revisar_presupuesto(&st, &solucion_id, &sesion_id, uso.prompt + uso.completion).await.is_err() {
+                tope = true;
+                conversacion.push(json!({ "role": "user", "content": "Se alcanzó el presupuesto de tokens de esta sesión. No uses más herramientas: responde ahora con lo que tienes y di qué quedó sin hacer." }));
+            }
+            let sin_herr = ronda >= max_rondas || restante < 60_000 || reintento_length || tope;
+            if ronda > 0 && ronda == max_rondas && !herramientas.is_empty() {
                 conversacion.push(json!({ "role": "user", "content": "Ya no puedes usar más herramientas. Responde ahora con lo que tienes y di explícitamente qué no pudiste verificar." }));
             }
             let tools: Option<Value> = if sin_herr {
@@ -1206,6 +1250,13 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
                 let mut t: Vec<Value> = HERRAMIENTAS.clone();
                 if sin_repo {
                     t.push(HERRAMIENTA_CREAR_REPO.clone());
+                }
+                t.extend(ia::HERRAMIENTAS_WEB.iter().cloned());
+                if puede_escribir {
+                    t.extend(ia::HERRAMIENTAS_ESCRITURA.iter().cloned());
+                    if dev_ok {
+                        t.extend(ia::HERRAMIENTAS_DEV.iter().cloned());
+                    }
                 }
                 Some(Value::Array(t))
             };
@@ -1223,7 +1274,7 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
                 for ll in &llamadas {
                     let nombre = ll.pointer("/function/name").and_then(|n| n.as_str()).unwrap_or("");
                     let args = ll.pointer("/function/arguments").and_then(|n| n.as_str()).unwrap_or("");
-                    let res = ejecutar_herramienta(&st, nombre, args, &CtxHerr { solucion_id: &solucion_id, sesion_id: &sesion_id, usuario_id: &usuario_id }).await;
+                    let res = ejecutar_herramienta(&st, nombre, args, &CtxHerr { solucion_id: &solucion_id, sesion_id: &sesion_id, usuario_id: &usuario_id, fase: fase_sesion.as_deref(), uso_web: &uso_web, puede_escribir, desarrollo: dev_ok }).await;
                     herramientas.push(json!({ "nombre": nombre, "args": args.chars().take(200).collect::<String>(), "chars": res.chars().count() }));
                     conversacion.push(json!({ "role": "tool", "tool_call_id": ll["id"], "content": res }));
                 }
@@ -1539,7 +1590,7 @@ async fn sesion_crear(State(st): State<AppState>, o: Opcional, Path(id): Path<St
         return Err(no_encontrado("Proyecto"));
     }
     let body = cuerpo.map(|Json(b)| b).unwrap_or_else(|| json!({}));
-    let mut tipo = s(&body, "tipo").filter(|t| ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"].contains(&t.as_str())).unwrap_or_else(|| "LIBRE".into());
+    let mut tipo = s(&body, "tipo").filter(|t| ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE", "DESARROLLO"].contains(&t.as_str())).unwrap_or_else(|| "LIBRE".into());
     // Con un rol de la fase, el rol manda: tipo, título y lista de cierre salen del catálogo de la plantilla.
     let mut titulo_por_defecto = "Nueva sesión".to_string();
     let (mut fase_clave, mut rol_clave, mut cierre) = (None::<String>, None::<String>, Value::Array(vec![]));
@@ -1753,6 +1804,32 @@ async fn sesion_cerrar(State(st): State<AppState>, o: Opcional, Path((id, sid)):
     let upd = fetch_json(&st.pool, r#"WITH up AS (UPDATE "ProyectoSesion" SET estado = 'CERRADA', "cierreEstado" = 'PROCESANDO', "updatedAt" = NOW() WHERE id = $1 RETURNING *) SELECT to_jsonb(up) FROM up"#, &[B::T(sid.clone())]).await?;
     tokio::spawn(procesar_cierre(st.clone(), sid));
     Ok(Json(upd))
+}
+
+/// Genera el PRD con la conversación de la sesión como contexto y lo deja como PROPUESTA en el artefacto: nada se aplica hasta que una persona la acepta.
+async fn prd_proponer(State(st): State<AppState>, o: Opcional, Path((id, sid)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    let u = usuario(&o)?;
+    let se = sesion_visible(&st, &id, &sid, &u).await?.ok_or_else(|| no_encontrado("Sesión"))?;
+    let msgs = mensajes_listos(&st, &sid).await?;
+    if msgs.is_empty() {
+        return Err(ApiError::bad_request("La sesión todavía no tiene conversación de la que partir"));
+    }
+    let mut texto = String::new();
+    for m in msgs.iter().rev() {
+        let l = format!("{}: {}\n\n", if m.rol == "user" { m.autor.clone().unwrap_or_else(|| "Persona".into()) } else { "Asistente".into() }, m.contenido);
+        if texto.chars().count() + l.chars().count() > 14000 {
+            break;
+        }
+        texto = format!("{l}{texto}");
+    }
+    let r = super::soluciones_ia::generar_prd(&st, &id, Some(&texto)).await?.0;
+    if !r["prd"].is_object() {
+        return Err(ApiError::internal("La IA no devolvió un PRD válido"));
+    }
+    let titulo = format!("PRD propuesto desde la sesión «{}»", corta(se["titulo"].as_str().unwrap_or("sesión"), 80));
+    let detalle = "Generado con el generador del PRD usando la conversación de la sesión y el contexto del proyecto. Al aceptarlo se reemplazan las secciones de texto con lo propuesto y se agregan los requisitos nuevos; los requisitos que ya existen se conservan.".to_string();
+    let p = super::artefactos::crear_propuesta(&st, &id, "prd", &titulo, Some(detalle), json!([{ "op": "reemplazar", "valor": r["prd"] }]), &u.nombre).await?;
+    Ok(Json(json!({ "propuesta": p, "avisos": r["avisos"], "requisitos": r["prd"]["requisitos"].as_array().map(|a| a.len()).unwrap_or(0) })))
 }
 
 async fn sesion_bifurcar(State(st): State<AppState>, o: Opcional, Path((id, sid)): Path<(String, String)>, cuerpo: Option<Json<Value>>) -> ApiResult<(StatusCode, Json<Value>)> {
@@ -2076,7 +2153,7 @@ async fn adjunto_eliminar(State(st): State<AppState>, o: Opcional, Path((id, aid
 }
 
 // ═══════════════════════════════ AUTOMATIZACIONES (SUSCRIPCIONES) ═══════════════════════════════
-async fn obtener_bitacora(st: &AppState, solucion_id: &str) -> Result<String, sqlx::Error> {
+pub(crate) async fn obtener_bitacora(st: &AppState, solucion_id: &str) -> Result<String, sqlx::Error> {
     if let Some(id) = fetch_text_opt(&st.pool, r#"SELECT id FROM "ProyectoSesion" WHERE "solucionId" = $1 AND tipo = 'BITACORA' LIMIT 1"#, &[B::T(solucion_id.into())]).await? {
         return Ok(id);
     }
@@ -2089,7 +2166,7 @@ async fn obtener_bitacora(st: &AppState, solucion_id: &str) -> Result<String, sq
     .map(|x| x.unwrap_or_default())
 }
 
-async fn publicar_en_sesion(st: &AppState, sesion_id: &str, contenido: &str, meta: Value) -> Result<(), sqlx::Error> {
+pub(crate) async fn publicar_en_sesion(st: &AppState, sesion_id: &str, contenido: &str, meta: Value) -> Result<(), sqlx::Error> {
     let mut metadata = json!({ "origen": "suscripcion" });
     if let (Some(m), Some(extra)) = (metadata.as_object_mut(), meta.as_object()) {
         for (k, v) in extra {

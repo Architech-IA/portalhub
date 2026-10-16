@@ -19,7 +19,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Reunir giro, tamaño, señales de necesidad, posibles decisores y antecedentes públicos. Dejar la ficha en el Lead Hub."
+          "descripcion": "Reunir giro, tamaño, señales de necesidad, posibles decisores y antecedentes públicos. Dejar la ficha en el Lead Hub.",
+          "entregable": "ficha_cliente"
         },
         {
           "clave": "go_no_go",
@@ -28,7 +29,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Decisión de una persona: seguir o descartar, y cuántas horas o cuánto costo se está dispuesto a invertir antes de la venta."
+          "descripcion": "Decisión de una persona: seguir o descartar, y cuántas horas o cuánto costo se está dispuesto a invertir antes de la venta.",
+          "entregable": "decision"
         }
       ],
       "entregables": [
@@ -129,7 +131,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Primer contacto con el decisor y reunión de diagnóstico agendada en el Calendar."
+          "descripcion": "Primer contacto con el decisor y reunión de diagnóstico agendada en el Calendar.",
+          "entregable": "reunion_agendada"
         }
       ],
       "entregables": [
@@ -217,7 +220,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "A partir de la reunión: acta, dolor y objetivos del cliente, requisitos iniciales y compromisos adquiridos."
+          "descripcion": "A partir de la reunión: acta, dolor y objetivos del cliente, requisitos iniciales y compromisos adquiridos.",
+          "entregable": "acta"
         }
       ],
       "entregables": [
@@ -311,7 +315,8 @@
           "area": "Development",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Antes de construir: un diagrama de componentes en la pestaña Arquitectura del hub y las entidades con sus relaciones en Diseño técnico. Es la referencia que los agentes respetan al construir (entra al contexto de cada tarea y al verificador); se refina en la fase de Diseño y plan."
+          "descripcion": "Antes de construir: un diagrama de componentes en la pestaña Arquitectura del hub y las entidades con sus relaciones en Diseño técnico. Es la referencia que los agentes respetan al construir (entra al contexto de cada tarea y al verificador); se refina en la fase de Diseño y plan.",
+          "entregable": "esbozo_arquitectura"
         },
         {
           "clave": "construir_demo",
@@ -329,7 +334,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Lista de lo que se mostró y de los compromisos asumidos, para que el alcance del proyecto parta de lo acordado."
+          "descripcion": "Lista de lo que se mostró y de los compromisos asumidos, para que el alcance del proyecto parta de lo acordado.",
+          "entregable": "registro_demo"
         }
       ],
       "entregables": [
@@ -443,7 +449,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Propuesta con alcance, entregables, cronograma, precio y condiciones. Queda como borrador en Propuestas, versionada."
+          "descripcion": "Propuesta con alcance, entregables, cronograma, precio y condiciones. Queda como borrador en Propuestas, versionada.",
+          "entregable": "propuesta_enviada"
         },
         {
           "clave": "revision_envio",
@@ -452,7 +459,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Los agentes redactan; una persona revisa y envía. Nada sale al cliente sin aprobación humana."
+          "descripcion": "Los agentes redactan; una persona revisa y envía. Nada sale al cliente sin aprobación humana.",
+          "entregable": "propuesta_enviada"
         }
       ],
       "entregables": [
@@ -550,7 +558,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Condiciones finales (alcance, precio, plazos) y compromisos que pasarán al proyecto."
+          "descripcion": "Condiciones finales (alcance, precio, plazos) y compromisos que pasarán al proyecto.",
+          "entregable": "propuesta_aceptada"
         }
       ],
       "entregables": [
@@ -635,7 +644,8 @@
           "area": "Client Delivery",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "PRD versión 2: el de preventa queda guardado como versión 1. Incluye los compromisos registrados en la demo y la negociación."
+          "descripcion": "PRD versión 2: el de preventa queda guardado como versión 1. Incluye los compromisos registrados en la demo y la negociación.",
+          "entregable": "prd_aprobado"
         },
         {
           "clave": "alcance_base",
@@ -653,7 +663,8 @@
           "area": "Client Delivery",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Reunión de arranque, responsables de cada lado, canales de comunicación y accesos necesarios."
+          "descripcion": "Reunión de arranque, responsables de cada lado, canales de comunicación y accesos necesarios.",
+          "entregable": "acta_arranque"
         },
         {
           "clave": "revisar_mvp",
@@ -753,7 +764,8 @@
           "area": "Development",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Diseño técnico en la Solución (arquitectura, componentes, datos, integraciones y decisiones)."
+          "descripcion": "Diseño técnico en la Solución (arquitectura, componentes, datos, integraciones y decisiones).",
+          "entregable": "diseno_aprobado"
         },
         {
           "clave": "plan_ejecucion",
@@ -762,7 +774,8 @@
           "area": "Operations",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Plan de ejecución en la Solución: QA, ambientes y despliegue, responsables, gestión de cambios y comunicación."
+          "descripcion": "Plan de ejecución en la Solución: QA, ambientes y despliegue, responsables, gestión de cambios y comunicación.",
+          "entregable": "plan_aprobado"
         },
         {
           "clave": "backlog",
@@ -771,7 +784,8 @@
           "area": "Development",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD."
+          "descripcion": "Backlog completo, priorizado y con criterios de aceptación tomados del PRD.",
+          "entregable": "backlog_creado"
         }
       ],
       "entregables": [
@@ -906,7 +920,8 @@
           "area": "Development",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Los sprints y sus tareas se gestionan en Backlog y en la Sala de Control. Esta actividad se cierra cuando se completan."
+          "descripcion": "Los sprints y sus tareas se gestionan en Backlog y en la Sala de Control. Esta actividad se cierra cuando se completan.",
+          "entregable": "avance"
         },
         {
           "clave": "actualizar_diseno",
@@ -1005,7 +1020,8 @@
           "area": "Quality & Testing",
           "backlogType": "TEST_QA",
           "prioridad": "HIGH",
-          "descripcion": "Pruebas funcionales y de regresión; informe con los hallazgos."
+          "descripcion": "Pruebas funcionales y de regresión; informe con los hallazgos.",
+          "entregable": "informe_pruebas"
         },
         {
           "clave": "uat",
@@ -1014,7 +1030,8 @@
           "area": "Client Delivery",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "El cliente prueba y acepta. Los hallazgos se corrigen antes de pasar a producción."
+          "descripcion": "El cliente prueba y acepta. Los hallazgos se corrigen antes de pasar a producción.",
+          "entregable": "acta_aceptacion"
         }
       ],
       "entregables": [
@@ -1116,7 +1133,8 @@
           "area": "Infrastructure & DevOps",
           "backlogType": "INFRAESTRUCTURA",
           "prioridad": "HIGH",
-          "descripcion": "Despliegue, verificación posterior, monitoreo y plan de vuelta atrás probado."
+          "descripcion": "Despliegue, verificación posterior, monitoreo y plan de vuelta atrás probado.",
+          "entregable": "produccion"
         }
       ],
       "entregables": [
@@ -1185,7 +1203,8 @@
           "area": "Client Delivery",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Documentación técnica y de usuario, manual de operación y checklist de traspaso (repositorio, accesos, dominios)."
+          "descripcion": "Documentación técnica y de usuario, manual de operación y checklist de traspaso (repositorio, accesos, dominios).",
+          "entregable": "paquete_entrega"
         },
         {
           "clave": "capacitacion",
@@ -1203,7 +1222,8 @@
           "area": "Operations",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Comparar lo estimado con lo real (tiempo y tokens) para mejorar las próximas propuestas."
+          "descripcion": "Comparar lo estimado con lo real (tiempo y tokens) para mejorar las próximas propuestas.",
+          "entregable": "lecciones"
         }
       ],
       "entregables": [

@@ -252,29 +252,10 @@ async fn sol_campos(st: &AppState, id: &str) -> R<Value> {
     fetch_json_opt(&st.pool, r#"SELECT to_jsonb(s) FROM "Solucion" s WHERE s.id = $1"#, &[B::T(id.into())]).await.map_err(|e| e.to_string())?.ok_or_else(|| "La Solución no existe.".to_string())
 }
 
-/// Redeploy sin downtime: el contenedor nuevo se levanta en un puerto aparte y se confirma sano antes de
-/// que Nginx deje de apuntar al viejo.
-pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
-    let sol = sol_campos(st, solucion_id).await?;
-    let nombre = sol["nombre"].as_str().unwrap_or("").to_string();
-    if sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true) {
-        return Err("Esta Solución no tiene repositorio asociado — no hay nada que desplegar.".into());
-    }
-    let viejo = sol["deployContainerName"].as_str().filter(|x| !x.is_empty()).map(String::from);
-    exec(&st.pool, r#"UPDATE "Solucion" SET "deployStatus"='DEPLOYING', "updatedAt"=NOW() WHERE id=$1"#, &[B::T(solucion_id.into())]).await.map_err(|e| e.to_string())?;
-    let r: R<Value> = async {
-        let repo = resolver_repo(st, Some(solucion_id)).await?;
-        // El despliegue siempre parte de lo ya mergeado y revisado en main.
-        super::repo::git_con_credenciales(st, &["fetch", "origin", "main"], &repo).await?;
-        sh("git", &["checkout", "main"], Some(&repo), 300).await?;
-        sh("git", &["reset", "--hard", "origin/main"], Some(&repo), 300).await?;
-        asegurar_dockerfile()?;
-        asegurar_carpeta_prisma(&repo);
-        let slug = slug_deploy(&nombre);
-        let imagen = format!("demo-image-{slug}");
+/// Pone en marcha un contenedor de la imagen indicada, espera a que responda, recién entonces apunta Nginx a él y retira el viejo.
+async fn levantar(st: &AppState, sol: &Value, solucion_id: &str, nombre: &str, slug: &str, imagen: &str, viejo: &Option<String>) -> R<Value> {
         let nuevo = format!("demo-{slug}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
         let puerto = puerto_libre(st).await?;
-        sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &imagen, &repo.to_string_lossy()], None, 600).await?;
         // El puerto se publica SOLO en localhost: Nginx es quien atiende a internet (con HTTPS). Antes quedaba en 0.0.0.0 y la app respondía por HTTP plano.
         let mut args: Vec<String> = ["run", "-d", "--name", &nuevo, "-p", &format!("127.0.0.1:{puerto}:3000"), "--restart", "unless-stopped"].iter().map(|s| s.to_string()).collect();
         if let Some(red) = sol["dbNetworkName"].as_str().filter(|x| !x.is_empty()) {
@@ -283,7 +264,7 @@ pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
         if let Some(env) = env_si_existe(&nombre) {
             args.extend(["--env-file".into(), env]);
         }
-        args.push(imagen.clone());
+        args.push(imagen.to_string());
         let a: Vec<&str> = args.iter().map(String::as_str).collect();
         sh("docker", &a, None, 300).await?;
         if let Err(e) = esperar_contenedor(&nuevo, puerto, 15).await {
@@ -315,6 +296,138 @@ pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
         .await
         .map_err(|e| e.to_string())?;
         Ok(json!({ "url": url, "puerto": puerto, "contenedor": nuevo, "slug": slug }))
+}
+
+/// Vuelve a la versión anterior de producción (la que había antes del último despliegue), sin reconstruir nada.
+pub async fn revertir(st: &AppState, solucion_id: &str) -> R<Value> {
+    let sol = sol_campos(st, solucion_id).await?;
+    let nombre = sol["nombre"].as_str().unwrap_or("").to_string();
+    let slug = slug_deploy(&nombre);
+    let imagen = format!("demo-image-{slug}");
+    if sh("docker", &["image", "inspect", &format!("{imagen}:anterior")], None, 60).await.is_err() {
+        return Err("No hay una versión anterior guardada: solo existe después de un segundo despliegue.".into());
+    }
+    let viejo = sol["deployContainerName"].as_str().filter(|x| !x.is_empty()).map(String::from);
+    if viejo.is_none() {
+        return Err("El proyecto no está desplegado: no hay nada que revertir.".into());
+    }
+    exec(&st.pool, r#"UPDATE "Solucion" SET "deployStatus"='DEPLOYING', "updatedAt"=NOW() WHERE id=$1"#, &[B::T(solucion_id.into())]).await.map_err(|e| e.to_string())?;
+    let r = levantar(st, &sol, solucion_id, &nombre, &slug, &format!("{imagen}:anterior"), &viejo).await;
+    match &r {
+        Ok(_) => {
+            // La que acaba de salir queda como «anterior»: volver a revertir la recupera.
+            let _ = sh("docker", &["tag", &format!("{imagen}:latest"), &format!("{imagen}:reemplazada")], None, 60).await;
+            let _ = sh("docker", &["tag", &format!("{imagen}:anterior"), &format!("{imagen}:latest")], None, 60).await;
+            let _ = sh("docker", &["tag", &format!("{imagen}:reemplazada"), &format!("{imagen}:anterior")], None, 60).await;
+        }
+        Err(_) => {
+            let _ = exec(&st.pool, r#"UPDATE "Solucion" SET "deployStatus"='LIVE', "updatedAt"=NOW() WHERE id=$1"#, &[B::T(solucion_id.into())]).await;
+        }
+    }
+    r
+}
+
+fn rama_valida(r: &str) -> bool {
+    !r.is_empty() && r.len() <= 80 && !r.starts_with('-') && !r.contains("..") && r.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
+}
+
+/// Entorno de PRUEBAS: una copia aparte (otra URL) construida desde una rama que una persona ya subió. No toca producción y NO recibe la base de datos
+/// ni los secretos de producción.
+pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str) -> R<Value> {
+    if !rama_valida(rama) {
+        return Err("Nombre de rama no válido.".into());
+    }
+    let sol = sol_campos(st, solucion_id).await?;
+    let nombre = sol["nombre"].as_str().unwrap_or("").to_string();
+    if sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true) {
+        return Err("Esta Solución no tiene repositorio asociado — no hay nada que desplegar.".into());
+    }
+    let slug = format!("{}-pruebas", slug_deploy(&nombre));
+    let repo = resolver_repo(st, Some(solucion_id)).await?;
+    super::repo::git_con_credenciales(st, &["fetch", "origin", rama], &repo).await.map_err(|_| format!("La rama «{rama}» no existe en el repositorio: una persona debe subirla primero."))?;
+    let dir = PathBuf::from(format!("{DEPLOYS}/pruebas/{slug}"));
+    let _ = sh("git", &["worktree", "remove", "--force", &dir.to_string_lossy()], Some(&repo), 60).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = sh("git", &["worktree", "prune"], Some(&repo), 60).await;
+    std::fs::create_dir_all(format!("{DEPLOYS}/pruebas")).map_err(|e| e.to_string())?;
+    sh("git", &["worktree", "add", "--detach", &dir.to_string_lossy(), "FETCH_HEAD"], Some(&repo), 300).await?;
+    let r: R<Value> = async {
+        asegurar_dockerfile()?;
+        asegurar_carpeta_prisma(&dir);
+        let imagen = format!("demo-image-{slug}");
+        sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &imagen, &dir.to_string_lossy()], None, 600).await?;
+        let puerto = (4200u16..4250).find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()).ok_or_else(|| "No hay puertos libres para pruebas (4200-4249).".to_string())?;
+        let nuevo = format!("demo-{slug}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+        let etiqueta = format!("demo-pruebas={slug}");
+        let publicar = format!("127.0.0.1:{puerto}:3000");
+        sh("docker", &["run", "-d", "--name", &nuevo, "--label", &etiqueta, "-p", &publicar, "--memory=1g", "--restart", "no", &imagen], None, 300).await?;
+        if let Err(e) = esperar_contenedor(&nuevo, puerto as i64, 15).await {
+            let _ = sh("docker", &["rm", "-f", &nuevo], None, 60).await;
+            return Err(e);
+        }
+        let nginx: R<()> = async {
+            std::fs::write(ruta_nginx(&slug), nginx_https(&slug, puerto as i64)).map_err(|e| e.to_string())?;
+            sh("nginx", &["-t"], None, 60).await?;
+            sh("systemctl", &["reload", "nginx"], None, 60).await?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = nginx {
+            let _ = sh("docker", &["rm", "-f", &nuevo], None, 60).await;
+            let _ = std::fs::remove_file(ruta_nginx(&slug));
+            return Err(e);
+        }
+        let previos = sh("docker", &["ps", "-a", "--filter", &format!("label={etiqueta}"), "--format", "{{.Names}}"], None, 60).await.unwrap_or_default();
+        for p in previos.lines().map(str::trim).filter(|p| !p.is_empty() && *p != nuevo) {
+            let _ = sh("docker", &["rm", "-f", p], None, 60).await;
+        }
+        Ok(json!({ "url": format!("https://{slug}.{DOMINIO}"), "rama": rama, "puerto": puerto }))
+    }
+    .await;
+    let _ = sh("git", &["worktree", "remove", "--force", &dir.to_string_lossy()], Some(&repo), 60).await;
+    r
+}
+
+/// Retira el entorno de pruebas (contenedor y Nginx).
+pub async fn retirar_pruebas(st: &AppState, solucion_id: &str) -> R<Value> {
+    let sol = sol_campos(st, solucion_id).await?;
+    let slug = format!("{}-pruebas", slug_deploy(sol["nombre"].as_str().unwrap_or("")));
+    let previos = sh("docker", &["ps", "-a", "--filter", &format!("label=demo-pruebas={slug}"), "--format", "{{.Names}}"], None, 60).await.unwrap_or_default();
+    for p in previos.lines().map(str::trim).filter(|p| !p.is_empty()) {
+        let _ = sh("docker", &["rm", "-f", p], None, 60).await;
+    }
+    let _ = std::fs::remove_file(ruta_nginx(&slug));
+    let _ = sh("systemctl", &["reload", "nginx"], None, 60).await;
+    Ok(json!({ "retirado": true }))
+}
+
+/// Redeploy sin downtime: el contenedor nuevo se levanta en un puerto aparte y se confirma sano antes de
+/// que Nginx deje de apuntar al viejo.
+pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
+    let sol = sol_campos(st, solucion_id).await?;
+    let nombre = sol["nombre"].as_str().unwrap_or("").to_string();
+    if sol["repositorio"].as_str().map(|r| r.is_empty()).unwrap_or(true) {
+        return Err("Esta Solución no tiene repositorio asociado — no hay nada que desplegar.".into());
+    }
+    let viejo = sol["deployContainerName"].as_str().filter(|x| !x.is_empty()).map(String::from);
+    exec(&st.pool, r#"UPDATE "Solucion" SET "deployStatus"='DEPLOYING', "updatedAt"=NOW() WHERE id=$1"#, &[B::T(solucion_id.into())]).await.map_err(|e| e.to_string())?;
+    let r: R<Value> = async {
+        let repo = resolver_repo(st, Some(solucion_id)).await?;
+        // El despliegue siempre parte de lo ya mergeado y revisado en main.
+        super::repo::git_con_credenciales(st, &["fetch", "origin", "main"], &repo).await?;
+        sh("git", &["checkout", "main"], Some(&repo), 300).await?;
+        sh("git", &["reset", "--hard", "origin/main"], Some(&repo), 300).await?;
+        asegurar_dockerfile()?;
+        asegurar_carpeta_prisma(&repo);
+        let slug = slug_deploy(&nombre);
+        let imagen = format!("demo-image-{slug}");
+        // Se construye con una etiqueta aparte: la versión que está en producción sigue intacta hasta que la nueva responda.
+        sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &format!("{imagen}:nueva"), &repo.to_string_lossy()], None, 600).await?;
+        let r = levantar(st, &sol, solucion_id, &nombre, &slug, &format!("{imagen}:nueva"), &viejo).await?;
+        // Recién ahora la versión que estaba pasa a ser la «anterior» (a la que se puede volver) y la nueva, la vigente.
+        let _ = sh("docker", &["tag", &format!("{imagen}:latest"), &format!("{imagen}:anterior")], None, 60).await;
+        let _ = sh("docker", &["tag", &format!("{imagen}:nueva"), &format!("{imagen}:latest")], None, 60).await;
+        Ok(r)
     }
     .await;
     if r.is_err() {

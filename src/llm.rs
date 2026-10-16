@@ -17,6 +17,37 @@ use crate::state::AppState;
 
 const MAX_INTENTOS: u32 = 2;
 
+/// Anota el uso de tokens de una llamada. Las sesiones de proyecto («proyecto-…») ya lo guardan en cada mensaje.
+fn registrar_uso(st: &AppState, session: &str, data: &Value) {
+    let Some(u) = data.get("usage") else { return };
+    if session.starts_with("proyecto-") {
+        return;
+    }
+    let n = |p: &str| u.pointer(p).and_then(|x| x.as_i64()).unwrap_or(0);
+    let (p, c, o, r) = (n("/prompt_tokens"), n("/prompt_tokens_details/cached_tokens"), n("/completion_tokens"), n("/completion_tokens_details/reasoning_tokens"));
+    if p + o == 0 {
+        return;
+    }
+    let origen = if session.starts_with("prd") {
+        "PRD"
+    } else if session.starts_with("nota-") {
+        "NOTAS"
+    } else if session.starts_with("entregable-") {
+        "ENTREGABLES"
+    } else {
+        "OTROS"
+    };
+    let (pool, clave) = (st.pool.clone(), session.to_string());
+    tokio::spawn(async move {
+        let _ = crate::util::exec(
+            &pool,
+            r#"INSERT INTO "UsoIA" (id, clave, origen, "promptTokens", "cachedTokens", "completionTokens", "reasoningTokens") VALUES (gen_random_uuid()::text, $1, $2, $3::int, $4::int, $5::int, $6::int)"#,
+            &[crate::util::B::T(clave), crate::util::B::T(origen.into()), crate::util::B::I(p), crate::util::B::I(c), crate::util::B::I(o), crate::util::B::I(r)],
+        )
+        .await;
+    });
+}
+
 fn es_filtro_de_contenido(detalle: &str) -> bool {
     let d = detalle.to_lowercase();
     d.contains("data_inspection_failed") || d.contains("inappropriate content")
@@ -73,6 +104,7 @@ pub async fn call_open_code_messages(
         }
 
         let data: Value = res.json().await.map_err(|_| "El modelo devolvió una respuesta vacía.".to_string())?;
+        registrar_uso(st, session, &data);
         let contenido = data
             .pointer("/choices/0/message/content")
             .and_then(|c| c.as_str())
@@ -163,6 +195,7 @@ pub async fn call_open_code_chat(
             return Err(format!("El modelo respondió {}: {}", status.as_u16(), corto));
         }
         let data: Value = res.json().await.map_err(|_| "El modelo devolvió una respuesta vacía.".to_string())?;
+        registrar_uso(st, session, &data);
         let choice = data.pointer("/choices/0").cloned().unwrap_or(Value::Null);
         let message = choice.get("message").cloned().unwrap_or_else(|| json!({ "role": "assistant", "content": "" }));
         let content = message.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();

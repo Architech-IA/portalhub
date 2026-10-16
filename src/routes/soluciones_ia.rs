@@ -194,7 +194,12 @@ fn secciones_por_tipo(tipo: &str) -> Vec<&'static str> {
 
 async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     autenticado(&o)?;
-    let Some(b) = base_contexto(&st, &id).await? else { return Err(ApiError::not_found("No encontrado")) };
+    generar_prd(&st, &id, None).await
+}
+
+/// Genera el borrador de PRD. `extra` es la conversación de una sesión de trabajo: lo que la persona ya aclaró pesa más que las suposiciones.
+pub async fn generar_prd(st: &AppState, id: &str, extra: Option<&str>) -> ApiResult<Json<Value>> {
+    let Some(b) = base_contexto(st, id).await? else { return Err(ApiError::not_found("No encontrado")) };
     let sol = &b.sol;
     let secciones = secciones_por_tipo(sol["tipo"].as_str().unwrap_or(""));
     let g = |k: &str| txt(sol, k);
@@ -237,6 +242,7 @@ async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<Str
         Some(propuestas_txt.clone()).filter(|f| !f.is_empty()).map(|f| format!("Propuestas comerciales (lo prometido al cliente; la ACCEPTED es el alcance vendido):\n{}", truncar(&f, 6000))),
         Some(b.hub.clone()).filter(|f| !f.is_empty()).map(|f| format!("Notas del proceso de preventa (Lead Hub):\n{}", truncar(&f, 12000))),
         Some(diseno_txt.clone()).filter(|f| !f.is_empty()).map(|f| format!("Diseño técnico ya definido (el PRD no debe contradecirlo):\n{f}")),
+        extra.filter(|e| !e.trim().is_empty()).map(|e| format!("Conversación de la sesión de trabajo (lo que la persona ya aclaró o decidió; tiene prioridad sobre cualquier suposición):\n{}", truncar(e, 14000))),
     ]
     .into_iter()
     .flatten()
@@ -248,7 +254,8 @@ async fn prd_generar(State(st): State<AppState>, o: Opcional, Path(id): Path<Str
         || !b.riesgos.is_empty()
         || !b.hitos.is_empty()
         || !b.hub.is_empty()
-        || !propuestas_txt.is_empty();
+        || !propuestas_txt.is_empty()
+        || extra.map(|e| !e.trim().is_empty()).unwrap_or(false);
     let con_requisitos = secciones.contains(&"requisitos");
     let secciones_base: Vec<&str> = secciones.iter().copied().filter(|x| *x != "requisitos").collect();
 
