@@ -331,9 +331,126 @@ fn rama_valida(r: &str) -> bool {
     !r.is_empty() && r.len() <= 80 && !r.starts_with('-') && !r.contains("..") && r.chars().all(|c| c.is_ascii_alphanumeric() || "._/-".contains(c))
 }
 
-/// Entorno de PRUEBAS: una copia aparte (otra URL) construida desde una rama que una persona ya subió. No toca producción y NO recibe la base de datos
-/// ni los secretos de producción.
-pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str) -> R<Value> {
+/// Horas que vive un entorno de pruebas antes de retirarse solo.
+const HORAS_PRUEBAS: u64 = 72;
+
+fn ahora_s() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn archivo_pruebas(slug: &str, ext: &str) -> PathBuf {
+    Path::new(DEPLOYS).join("pruebas").join(format!("{slug}.{ext}"))
+}
+
+fn guardar_privado(p: &Path, texto: &str) -> R<()> {
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(p, texto).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+fn cola_txt(t: &str, n: usize) -> String {
+    let c: Vec<char> = t.chars().collect();
+    c[c.len().saturating_sub(n)..].iter().collect()
+}
+
+async fn quitar_base(slug: &str) {
+    let n = format!("demo-db-{slug}");
+    let _ = sh("docker", &["rm", "-f", &n], None, 60).await;
+    let _ = sh("docker", &["volume", "rm", &n], None, 60).await;
+}
+
+/// Un Postgres desechable por entorno de pruebas (red propia, sin puerto publicado). Devuelve la URL y si es nueva.
+async fn crear_base_pruebas(slug: &str, reutilizar: bool) -> R<(String, bool)> {
+    let (red, cont) = (format!("demo-net-{slug}"), format!("demo-db-{slug}"));
+    let archivo = archivo_pruebas(slug, "env");
+    if reutilizar {
+        let url = std::fs::read_to_string(&archivo).unwrap_or_default().trim().to_string();
+        let viva = sh("docker", &["inspect", "-f", "{{.State.Running}}", &cont], None, 30).await.map(|o| o.trim() == "true").unwrap_or(false);
+        if !url.is_empty() && viva {
+            return Ok((url, false));
+        }
+    }
+    quitar_base(slug).await;
+    red_asegurar(&red).await?;
+    let clave = clave_aleatoria();
+    let db = slug.replace('-', "_");
+    let etiqueta = format!("demo-pruebas={slug}");
+    sh(
+        "docker",
+        &[
+            "run", "-d", "--name", &cont, "--network", &red, "--label", &etiqueta, "--label", "demo-rol=db", "--memory=512m", "--restart", "no", "-e", &format!("POSTGRES_PASSWORD={clave}"), "-e", &format!("POSTGRES_DB={db}"), "-e",
+            "POSTGRES_USER=app", "-v", &format!("{cont}:/var/lib/postgresql/data"), "postgres:16-alpine",
+        ],
+        None,
+        300,
+    )
+    .await?;
+    esperar_postgres(&cont, "app", 20).await?;
+    let url = format!("postgresql://app:{clave}@{cont}:5432/{db}");
+    guardar_privado(&archivo, &url)?;
+    Ok((url, true))
+}
+
+/// Crea las tablas en la base de pruebas: migrate deploy si el proyecto trae migraciones; si no, db push desde schema.prisma.
+async fn preparar_esquema(dir: &Path, imagen: &str, red: &str, url: &str, vars: Option<&str>) -> String {
+    if !dir.join("prisma").join("schema.prisma").exists() {
+        return "Sin Prisma: la app recibe DATABASE_URL y debe crear sus propias tablas.".into();
+    }
+    let con_migraciones = std::fs::read_dir(dir.join("prisma").join("migrations")).map(|d| d.flatten().any(|e| e.path().is_dir())).unwrap_or(false);
+    let (nombre, orden): (&str, Vec<&str>) = if con_migraciones { ("migrate deploy", vec!["migrate", "deploy"]) } else { ("db push (el proyecto no tiene migraciones)", vec!["db", "push", "--skip-generate"]) };
+    let paquete = version_prisma(dir).map(|v| format!("prisma@{v}")).unwrap_or_else(|| "prisma".into());
+    let mut a: Vec<String> = ["run", "--rm", "--user", "root", "--network", red].iter().map(|s| s.to_string()).collect();
+    if let Some(f) = vars {
+        a.extend(["--env-file".to_string(), f.to_string()]);
+    }
+    a.extend(["-e".to_string(), format!("DATABASE_URL={url}"), imagen.to_string(), "npx".to_string(), "--yes".to_string(), paquete]);
+    a.extend(orden.iter().map(|s| s.to_string()));
+    let r: Vec<&str> = a.iter().map(String::as_str).collect();
+    match sh("docker", &r, None, 300).await {
+        Ok(_) => format!("Esquema: {nombre} aplicado."),
+        Err(e) => format!("Esquema: {nombre} FALLÓ — {}", cola_txt(&e, 300)),
+    }
+}
+
+/// Corre el seed que el repositorio ya trae (prisma db seed o npm run seed), una sola vez y solo sobre una base nueva.
+async fn sembrar(dir: &Path, red: &str, url: &str, vars: Option<&str>) -> Option<String> {
+    let pkg: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("package.json")).ok()?).ok()?;
+    let comando = if pkg["prisma"]["seed"].is_string() {
+        "npx prisma db seed"
+    } else if pkg["scripts"]["seed"].is_string() {
+        "npm run seed"
+    } else {
+        return None;
+    };
+    let script = format!("(npm ci --ignore-scripts --no-audit --no-fund || npm install --ignore-scripts --no-audit --no-fund) && (npx prisma generate || true) && {comando}");
+    let montaje = format!("{}:/work", dir.to_string_lossy());
+    let mut a: Vec<String> = [
+        "run", "--rm", "--network", red, "--memory=2g", "--memory-swap=2g", "--cpus=2", "--pids-limit=512", "--cap-drop=ALL", "--security-opt=no-new-privileges", "-v", &montaje, "-w", "/work", "-e", "HOME=/tmp", "-e", "npm_config_cache=/tmp/.npm", "-e", "CI=1",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    if let Some(f) = vars {
+        a.extend(["--env-file".to_string(), f.to_string()]);
+    }
+    a.extend(["-e".to_string(), format!("DATABASE_URL={url}"), "node:22-bookworm".to_string(), "sh".to_string(), "-c".to_string(), script]);
+    let r: Vec<&str> = a.iter().map(String::as_str).collect();
+    Some(match sh("docker", &r, None, 900).await {
+        Ok(_) => format!("Semilla: se corrió «{comando}» del repositorio."),
+        Err(e) => format!("Semilla: «{comando}» FALLÓ — {}", cola_txt(&e, 300)),
+    })
+}
+
+/// Entorno de PRUEBAS: una copia aparte (otra URL) construida desde una rama que una persona ya subió, con su PROPIA base de datos desechable y solo las
+/// variables de prueba del proyecto (nada de producción). Vence a las 72 h.
+pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str, base: &str, semilla: bool) -> R<Value> {
     if !rama_valida(rama) {
         return Err("Nombre de rama no válido.".into());
     }
@@ -351,16 +468,38 @@ pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str) -> 
     let _ = sh("git", &["worktree", "prune"], Some(&repo), 60).await;
     std::fs::create_dir_all(format!("{DEPLOYS}/pruebas")).map_err(|e| e.to_string())?;
     sh("git", &["worktree", "add", "--detach", &dir.to_string_lossy(), "FETCH_HEAD"], Some(&repo), 300).await?;
+    let base_nueva = std::sync::atomic::AtomicBool::new(false);
     let r: R<Value> = async {
         asegurar_dockerfile()?;
         asegurar_carpeta_prisma(&dir);
         let imagen = format!("demo-image-{slug}");
         sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &imagen, &dir.to_string_lossy()], None, 600).await?;
+        let vars = super::dev::archivo_variables(solucion_id);
+        let red = format!("demo-net-{slug}");
+        let (url_db, nueva) = crear_base_pruebas(&slug, base == "conservar").await?;
+        base_nueva.store(nueva, std::sync::atomic::Ordering::SeqCst);
+        let mut notas: Vec<String> = vec![format!("Base de datos: {}.", if nueva { "nueva y vacía" } else { "la del entorno de pruebas anterior (conservada)" })];
+        notas.push(preparar_esquema(&dir, &imagen, &red, &url_db, vars.as_deref()).await);
+        if semilla && nueva {
+            match sembrar(&dir, &red, &url_db, vars.as_deref()).await {
+                Some(t) => notas.push(t),
+                None => notas.push("Semilla: el repositorio no define ninguna (prisma db seed o el script «seed»).".into()),
+            }
+        } else if semilla {
+            notas.push("Semilla omitida: la base se conservó y volver a sembrar duplicaría datos.".into());
+        }
+        notas.push(if vars.is_some() { "Variables de prueba del proyecto: inyectadas.".into() } else { "Variables de prueba: el proyecto no tiene ninguna.".to_string() });
         let puerto = (4200u16..4250).find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok()).ok_or_else(|| "No hay puertos libres para pruebas (4200-4249).".to_string())?;
         let nuevo = format!("demo-{slug}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
         let etiqueta = format!("demo-pruebas={slug}");
         let publicar = format!("127.0.0.1:{puerto}:3000");
-        sh("docker", &["run", "-d", "--name", &nuevo, "--label", &etiqueta, "-p", &publicar, "--memory=1g", "--restart", "no", &imagen], None, 300).await?;
+        let mut a: Vec<String> = ["run", "-d", "--name", &nuevo, "--label", &etiqueta, "--label", "demo-rol=app", "-p", &publicar, "--network", &red, "--memory=1g", "--restart", "no"].iter().map(|s| s.to_string()).collect();
+        if let Some(f) = &vars {
+            a.extend(["--env-file".to_string(), f.clone()]);
+        }
+        a.extend(["-e".to_string(), format!("DATABASE_URL={url_db}"), imagen.clone()]);
+        let args: Vec<&str> = a.iter().map(String::as_str).collect();
+        sh("docker", &args, None, 300).await?;
         if let Err(e) = esperar_contenedor(&nuevo, puerto as i64, 15).await {
             let _ = sh("docker", &["rm", "-f", &nuevo], None, 60).await;
             return Err(e);
@@ -377,28 +516,55 @@ pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str) -> 
             let _ = std::fs::remove_file(ruta_nginx(&slug));
             return Err(e);
         }
-        let previos = sh("docker", &["ps", "-a", "--filter", &format!("label={etiqueta}"), "--format", "{{.Names}}"], None, 60).await.unwrap_or_default();
+        let previos = sh("docker", &["ps", "-a", "--filter", &format!("label={etiqueta}"), "--filter", "label=demo-rol=app", "--format", "{{.Names}}"], None, 60).await.unwrap_or_default();
         for p in previos.lines().map(str::trim).filter(|p| !p.is_empty() && *p != nuevo) {
             let _ = sh("docker", &["rm", "-f", p], None, 60).await;
         }
-        Ok(json!({ "url": format!("https://{slug}.{DOMINIO}"), "rama": rama, "puerto": puerto }))
+        let expira = ahora_s() + HORAS_PRUEBAS * 3600;
+        let _ = guardar_privado(&archivo_pruebas(&slug, "expira"), &expira.to_string());
+        Ok(json!({ "url": format!("https://{slug}.{DOMINIO}"), "rama": rama, "puerto": puerto, "notas": notas, "expira": expira, "horas": HORAS_PRUEBAS }))
     }
     .await;
+    if r.is_err() && base_nueva.load(std::sync::atomic::Ordering::SeqCst) {
+        quitar_base(&slug).await;
+    }
     let _ = sh("git", &["worktree", "remove", "--force", &dir.to_string_lossy()], Some(&repo), 60).await;
     r
 }
 
-/// Retira el entorno de pruebas (contenedor y Nginx).
-pub async fn retirar_pruebas(st: &AppState, solucion_id: &str) -> R<Value> {
-    let sol = sol_campos(st, solucion_id).await?;
-    let slug = format!("{}-pruebas", slug_deploy(sol["nombre"].as_str().unwrap_or("")));
+/// Retira un entorno de pruebas completo: contenedores (app y base), volumen, red, Nginx y sus archivos.
+async fn retirar_slug(slug: &str) {
     let previos = sh("docker", &["ps", "-a", "--filter", &format!("label=demo-pruebas={slug}"), "--format", "{{.Names}}"], None, 60).await.unwrap_or_default();
     for p in previos.lines().map(str::trim).filter(|p| !p.is_empty()) {
         let _ = sh("docker", &["rm", "-f", p], None, 60).await;
     }
-    let _ = std::fs::remove_file(ruta_nginx(&slug));
+    quitar_base(slug).await;
+    let _ = sh("docker", &["network", "rm", &format!("demo-net-{slug}")], None, 60).await;
+    let _ = std::fs::remove_file(ruta_nginx(slug));
+    let _ = std::fs::remove_file(archivo_pruebas(slug, "env"));
+    let _ = std::fs::remove_file(archivo_pruebas(slug, "expira"));
     let _ = sh("systemctl", &["reload", "nginx"], None, 60).await;
+}
+
+/// Retira el entorno de pruebas de un proyecto (a mano).
+pub async fn retirar_pruebas(st: &AppState, solucion_id: &str) -> R<Value> {
+    let sol = sol_campos(st, solucion_id).await?;
+    let slug = format!("{}-pruebas", slug_deploy(sol["nombre"].as_str().unwrap_or("")));
+    retirar_slug(&slug).await;
     Ok(json!({ "retirado": true }))
+}
+
+/// Retira los entornos de pruebas cuyo plazo (72 h) ya venció. La llama la limpieza periódica del motor.
+pub async fn limpiar_pruebas_vencidas() {
+    let Ok(rd) = std::fs::read_dir(Path::new(DEPLOYS).join("pruebas")) else { return };
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().to_string();
+        let Some(slug) = n.strip_suffix(".expira") else { continue };
+        if std::fs::read_to_string(e.path()).ok().and_then(|t| t.trim().parse::<u64>().ok()).map(|x| x < ahora_s()).unwrap_or(false) {
+            tracing::info!("[pruebas] entorno vencido retirado: {slug}");
+            retirar_slug(slug).await;
+        }
+    }
 }
 
 /// Redeploy sin downtime: el contenedor nuevo se levanta en un puerto aparte y se confirma sano antes de

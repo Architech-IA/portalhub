@@ -664,6 +664,12 @@ fn ruta_vars(sol: &str) -> PathBuf {
     Path::new(DIR_VARS).join(format!("{limpio}.env"))
 }
 
+/// Archivo de variables de prueba del proyecto (para --env-file), si tiene alguna.
+pub fn archivo_variables(sol: &str) -> Option<String> {
+    let p = ruta_vars(sol);
+    (std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false)).then(|| p.to_string_lossy().to_string())
+}
+
 fn variables_de(sol: &str) -> Vec<(String, String)> {
     std::fs::read_to_string(ruta_vars(sol)).unwrap_or_default().lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
@@ -919,6 +925,7 @@ pub fn iniciar_limpieza() {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_secs(600)).await;
+            super::despliegue::limpiar_pruebas_vencidas().await;
             let Ok((true, out, _)) = sh_salida("docker", &["ps", "--filter", "label=dev-sesion", "--format", "{{.Names}}|{{.Label \"dev-expira\"}}"], None, 30).await else { continue };
             for l in out.lines() {
                 if let Some((n, e)) = l.split_once('|') {

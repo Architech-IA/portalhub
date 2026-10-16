@@ -436,7 +436,7 @@ async fn proyecto_deploy_revertir(State(st): State<AppState>, Path(id): Path<Str
 }
 
 async fn proyecto_deploy_pruebas(State(st): State<AppState>, Path(id): Path<String>, Json(b): Json<Value>) -> Response {
-    let r = if b["retirar"] == true { despliegue::retirar_pruebas(&st, &id).await } else { despliegue::desplegar_pruebas(&st, &id, b["rama"].as_str().unwrap_or("main")).await };
+    let r = if b["retirar"] == true { despliegue::retirar_pruebas(&st, &id).await } else { despliegue::desplegar_pruebas(&st, &id, b["rama"].as_str().unwrap_or("main"), if b["base"] == "conservar" { "conservar" } else { "nueva" }, b["semilla"] != false).await };
     match r {
         Ok(r) => Json(r).into_response(),
         Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
