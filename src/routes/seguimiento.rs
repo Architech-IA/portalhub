@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/revision/ejecutar", post(ejecutar_ahora))
         .route("/api/proyectos/{id}/resumen", get(resumen))
         .route("/api/proyectos/{id}/costo", get(costo))
+        .route("/api/costos", get(costos_global))
         .route("/api/proyectos/{id}/costo/presupuesto", axum::routing::put(costo_presupuesto))
         .route("/api/proyectos/{id}/alertas", get(alertas))
         .route("/api/proyectos/{id}/alertas/{aid}/descartar", post(descartar))
@@ -447,4 +448,37 @@ async fn costo_presupuesto(State(st): State<AppState>, se: Session, Path(id): Pa
         }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+/// Costos de toda la oficina: por proyecto, los tokens de sus sesiones (este mes y en total, con su presupuesto) y los del ejecutor de tareas.
+async fn costos_global(State(st): State<AppState>, se: Session) -> ApiResult<Json<Value>> {
+    if !se.is_service {
+        se.require_user()?;
+    }
+    let proyectos = fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."tokensMes" DESC, x.total DESC), '[]'::jsonb) FROM (
+             SELECT s.id, s.nombre, COUNT(DISTINCT se.id)::int AS sesiones,
+                    COALESCE(SUM((m.metadata->'uso'->>'promptTokens')::bigint + (m.metadata->'uso'->>'completionTokens')::bigint), 0)::bigint AS total,
+                    COALESCE(SUM((m.metadata->'uso'->>'promptTokens')::bigint + (m.metadata->'uso'->>'completionTokens')::bigint) FILTER (WHERE m."createdAt" >= date_trunc('month', NOW())), 0)::bigint AS "tokensMes",
+                    p.tokens AS presupuesto
+               FROM "Solucion" s JOIN "ProyectoSesion" se ON se."solucionId" = s.id
+               LEFT JOIN "ProyectoMensaje" m ON m."sesionId" = se.id AND m.metadata ? 'uso'
+               LEFT JOIN "ProyectoPresupuesto" p ON p.clave = 'sol:' || s.id
+              GROUP BY s.id, s.nombre, p.tokens) x"#,
+        &[],
+    )
+    .await?;
+    let ejecutor = fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.total DESC), '[]'::jsonb) FROM (
+             SELECT s.id, s.nombre, SUM(u.t)::bigint AS total, COALESCE(SUM(u.t) FILTER (WHERE u.ini >= date_trunc('month', NOW())), 0)::bigint AS "tokensMes", COUNT(*)::int AS ejecuciones
+               FROM (SELECT e."backlogItemId" AS bid, e."startedAt" AS ini, (e.artifacts->'usage'->>'total_tokens')::bigint AS t
+                       FROM "TaskExecution" e WHERE jsonb_typeof(e.artifacts) = 'object' AND e.artifacts->'usage' IS NOT NULL) u
+               JOIN "BacklogItem" b ON b.id = u.bid JOIN "Solucion" s ON s.id = b."solucionId"
+              GROUP BY s.id, s.nombre) x"#,
+        &[],
+    )
+    .await?;
+    Ok(Json(json!({ "proyectos": proyectos, "ejecutor": ejecutor, "conPrecios": precios().is_some(), "presupuestoSesionPorDefecto": limite_por_defecto() })))
 }

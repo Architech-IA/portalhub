@@ -52,7 +52,45 @@ const SQL_PROBLEMAS: &str = r#"
 SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."updatedAt" DESC), '[]'::jsonb) FROM (
   SELECT b.id, b."taskCode", b.title, b.status, b."solucionId", s.nombre AS solucion, b."updatedAt"
     FROM "BacklogItem" b LEFT JOIN "Solucion" s ON s.id = b."solucionId"
-   WHERE b.status IN ('FAILED', 'BLOCKED') ORDER BY b."updatedAt" DESC LIMIT 20) x"#;
+   WHERE b.status IN ('FAILED', 'BLOCKED') AND b."updatedAt" >= NOW() - interval '14 days' ORDER BY b."updatedAt" DESC LIMIT 20) x"#;
+
+/// Fallidas o bloqueadas de hace más de 14 días: no cuentan como «problemas» de hoy, pero se avisa de que siguen ahí.
+const SQL_ANTIGUOS: &str = r#"SELECT to_jsonb(COUNT(*)::int) FROM "BacklogItem" WHERE status IN ('FAILED', 'BLOCKED') AND "updatedAt" < NOW() - interval '14 days'"#;
+
+/// Todo lo que está esperando a una persona además de las puertas de fase: acciones de la IA, propuestas a artefactos, archivos por revisar y avisos abiertos.
+const SQL_ESPERAN: &str = r#"
+SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.desde ASC), '[]'::jsonb) FROM (
+  SELECT * FROM (
+    SELECT 'accion' AS kind, a.id, a.titulo, COALESCE(a.motivo, '') AS detalle, a.tipo AS subtipo, a."solucionId", s.nombre AS solucion, a."createdAt" AS desde
+      FROM "ProyectoAccionIA" a JOIN "Solucion" s ON s.id = a."solucionId" WHERE a.estado = 'PENDIENTE'
+    UNION ALL
+    SELECT 'propuesta', p.id, p.titulo, COALESCE(p.detalle, ''), p.clave, p."solucionId", s.nombre, p."createdAt"
+      FROM "ArtefactoPropuesta" p JOIN "Solucion" s ON s.id = p."solucionId" WHERE p.estado = 'PENDIENTE'
+    UNION ALL
+    SELECT 'entregable', e.id, e.titulo, 'Archivo por revisar: ' || e.nombre, e."entregableClave", e."solucionId", s.nombre, e."createdAt"
+      FROM "ProyectoEntregableArchivo" e JOIN "Solucion" s ON s.id = e."solucionId" WHERE e.estado = 'BORRADOR'
+    UNION ALL
+    SELECT 'alerta', l.id, l.titulo, l.detalle, l.tipo, l."solucionId", s.nombre, l."creadaEn"
+      FROM "ProyectoAlerta" l JOIN "Solucion" s ON s.id = l."solucionId" WHERE l.estado = 'ABIERTA'
+  ) u ORDER BY desde ASC LIMIT 40) x"#;
+
+/// Sesiones de proyecto con actividad en los últimos 3 días (sin las bitácoras). «generando» = hay una respuesta en curso (y no es una vieja que quedó colgada).
+const SQL_SESIONES: &str = r#"
+SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.ultima DESC), '[]'::jsonb) FROM (
+  SELECT se.id, se.titulo, se.tipo, se."solucionId", s.nombre AS solucion, MAX(m."createdAt") AS ultima,
+         COALESCE(BOOL_OR(m.estado = 'GENERANDO' AND m."updatedAt" > NOW() - interval '15 minutes'), false) AS generando,
+         (SELECT mm.rol FROM "ProyectoMensaje" mm WHERE mm."sesionId" = se.id ORDER BY mm.orden DESC LIMIT 1) AS "ultimoRol"
+    FROM "ProyectoSesion" se JOIN "Solucion" s ON s.id = se."solucionId" JOIN "ProyectoMensaje" m ON m."sesionId" = se.id
+   WHERE se.estado = 'ACTIVA' AND se.tipo <> 'BITACORA' AND m."createdAt" >= NOW() - interval '3 days'
+   GROUP BY se.id, s.nombre ORDER BY ultima DESC LIMIT 10) x"#;
+
+/// Tokens gastados en lo que va del mes: sesiones de proyecto y ejecutor de tareas.
+const SQL_GASTO_MES: &str = r#"
+SELECT jsonb_build_object(
+  'sesiones', COALESCE((SELECT SUM((metadata->'uso'->>'promptTokens')::bigint + (metadata->'uso'->>'completionTokens')::bigint)::bigint FROM "ProyectoMensaje"
+                         WHERE metadata ? 'uso' AND "createdAt" >= date_trunc('month', NOW())), 0),
+  'ejecutor', COALESCE((SELECT SUM((artifacts->'usage'->>'total_tokens')::bigint)::bigint FROM "TaskExecution"
+                         WHERE jsonb_typeof(artifacts) = 'object' AND artifacts->'usage' IS NOT NULL AND "startedAt" >= date_trunc('month', NOW())), 0))"#;
 
 /// Atascada = IN_PROGRESS sin ejecución reciente, o con una ejecución RUNNING de hace más de $1 horas.
 const SQL_ATASCADAS: &str = r#"
@@ -123,6 +161,10 @@ async fn resumen(State(st): State<AppState>, se: Session) -> ApiResult<Json<Valu
     let atascadas = fetch_json(&st.pool, SQL_ATASCADAS, &[B::I(ATASCADA_HORAS)]).await?;
     let costo = fetch_json(&st.pool, SQL_COSTO, &[]).await?;
     let sin_motor = fetch_json(&st.pool, SQL_SIN_MOTOR, &[]).await?;
+    let antiguos = fetch_json(&st.pool, SQL_ANTIGUOS, &[]).await?;
+    let esperan = fetch_json(&st.pool, SQL_ESPERAN, &[]).await?;
+    let sesiones = fetch_json(&st.pool, SQL_SESIONES, &[]).await?;
+    let gasto_mes = fetch_json(&st.pool, SQL_GASTO_MES, &[]).await?;
 
     // Cola del Harness: si no contesta, se dice (los workers que sacan de esa cola dependen de ella).
     let url = std::env::var("HARNESS_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8767".to_string());
@@ -151,7 +193,10 @@ async fn resumen(State(st): State<AppState>, se: Session) -> ApiResult<Json<Valu
         "cartera": cartera,
         "leadsSinMotor": sin_motor,
         "aprobaciones": aprobaciones,
-        "ejecucion": { "corriendo": corriendo, "problemas": problemas, "atascadas": atascadas, "atascadaHoras": ATASCADA_HORAS, "harness": harness },
+        "esperan": esperan,
+        "sesiones": sesiones,
+        "gastoMes": gasto_mes,
+        "ejecucion": { "corriendo": corriendo, "problemas": problemas, "antiguos": antiguos, "atascadas": atascadas, "atascadaHoras": ATASCADA_HORAS, "harness": harness },
         "costo": costo,
     })))
 }
