@@ -1153,16 +1153,23 @@ pub async fn proyecto_para_lead(st: &AppState, lead_id: &str, a_id: &str, a_nomb
 
 async fn criterio(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
     let a = exigir_puede(&se)?;
-    let est = cargar_iniciado(&st, &id).await?;
+    let fase = s(&body, "fase").unwrap_or_default();
+    let j = body["indice"].as_u64().ok_or_else(|| ApiError::bad_request("Falta el número del criterio"))? as usize;
+    let ok = body["ok"].as_bool().ok_or_else(|| ApiError::bad_request("Falta indicar si el criterio se cumple"))?;
+    marcar_criterio(&st, &id, &a.nombre, &fase, j, ok).await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Marca (o desmarca) un criterio de la puerta de la fase actual. Lo usan la pantalla (administradores) y la confirmación de una propuesta de la IA de una sesión.
+pub(crate) async fn marcar_criterio(st: &AppState, id: &str, quien: &str, fase: &str, j: usize, ok: bool) -> Result<(), ApiError> {
+    let est = cargar_iniciado(st, id).await?;
     exigir_en_curso(&est)?;
     let def = &est["definicion"];
     let actual = est["faseActual"].as_str().unwrap_or_default();
-    if s(&body, "fase").as_deref() != Some(actual) {
+    if fase != actual {
         return Err(ApiError::bad_request("Solo se marcan los criterios de la fase actual"));
     }
     let cur = indice(def, actual).ok_or_else(|| ApiError::internal("Fase actual desconocida"))?;
-    let j = body["indice"].as_u64().ok_or_else(|| ApiError::bad_request("Falta el número del criterio"))? as usize;
-    let ok = body["ok"].as_bool().ok_or_else(|| ApiError::bad_request("Falta indicar si el criterio se cumple"))?;
     let total = criterios_fase(def, &est["criterios"], cur).len();
     if j >= total {
         return Err(ApiError::bad_request("Ese criterio no existe"));
@@ -1172,14 +1179,26 @@ async fn criterio(State(st): State<AppState>, se: Session, Path(id): Path<String
         .into_iter()
         .map(|c| json!({ "ok": c["ok"], "por": c["por"], "en": c["en"] }))
         .collect();
-    lista_c[j] = if ok { json!({ "ok": true, "por": a.nombre, "en": ahora(&st).await }) } else { json!({ "ok": false, "por": null, "en": null }) };
+    lista_c[j] = if ok { json!({ "ok": true, "por": quien, "en": ahora(st).await }) } else { json!({ "ok": false, "por": null, "en": null }) };
     let mut todos = est["criterios"].clone();
     if !todos.is_object() {
         todos = json!({});
     }
     todos[actual] = Value::Array(lista_c);
-    exec(&st.pool, r#"UPDATE "ProyectoFase" SET criterios = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id), B::J(todos)]).await?;
-    Ok(Json(json!({ "ok": true })))
+    exec(&st.pool, r#"UPDATE "ProyectoFase" SET criterios = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id.to_string()), B::J(todos)]).await?;
+    Ok(())
+}
+
+/// Los criterios de la puerta de la fase actual con su estado (para la IA de las sesiones). None si el motor no está en curso.
+pub(crate) async fn criterios_actuales(st: &AppState, id: &str) -> Result<Option<(String, Vec<Value>)>, ApiError> {
+    let Some(est) = cargar(st, id).await? else { return Ok(None) };
+    if est["estado"] != "EN_CURSO" {
+        return Ok(None);
+    }
+    let def = &est["definicion"];
+    let actual = est["faseActual"].as_str().unwrap_or_default().to_string();
+    let Some(idx) = indice(def, &actual) else { return Ok(None) };
+    Ok(Some((actual, criterios_fase(def, &est["criterios"], idx))))
 }
 
 /// Marca (o desmarca) un entregable manual de la fase actual, con su evidencia (enlace o referencia).
