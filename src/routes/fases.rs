@@ -31,6 +31,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/proyectos/{id}/fases", get(obtener))
         .route("/api/proyectos/{id}/fases/iniciar", post(iniciar))
+        .route("/api/proyectos/{id}/tipo", post(cambiar_tipo))
         .route("/api/proyectos/{id}/fases/criterio", post(criterio))
         .route("/api/proyectos/{id}/fases/entregable", post(entregable))
         .route("/api/proyectos/{id}/fases/avanzar", post(avanzar))
@@ -1035,6 +1036,74 @@ async fn iniciar_para(st: &AppState, id: &str, a: &Actor, elegida: Option<&str>)
         }
     }
     Ok(fase)
+}
+
+const TIPOS_VALIDOS: [&str; 5] = ["PROJECT", "DEMO", "PARTNERSHIP", "PRODUCT", "INTERN"];
+
+/// Cambia el tipo de una Solución. Si eso cambia su naturaleza (comercial ↔ interno) y el motor ya está iniciado, hay que reiniciarlo con la plantilla de la otra
+/// naturaleza: sin `reiniciar: true` solo se avisa de lo que se perdería; con él, primero se guarda un respaldo de su estado, y si el reinicio falla se deja todo como estaba.
+/// Las tareas del Backlog y los archivos no se tocan.
+async fn cambiar_tipo(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+    if !(se.is_admin() || se.is_service) {
+        return Err(ApiError::forbidden("Solo un administrador cambia el tipo de un proyecto"));
+    }
+    let a = actor(&se);
+    let nuevo = s_no_vacio(&body, "tipo").unwrap_or_default();
+    if !TIPOS_VALIDOS.contains(&nuevo.as_str()) {
+        return Err(ApiError::bad_request("Tipo no válido: usa PROJECT, DEMO, PARTNERSHIP, PRODUCT o INTERN"));
+    }
+    let actual = fetch_text_opt(&st.pool, r#"SELECT tipo FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await?.ok_or_else(|| ApiError::not_found("Proyecto no encontrado"))?;
+    if actual == nuevo {
+        return Ok(Json(json!({ "ok": true, "sinCambio": true })));
+    }
+    let cambia = naturaleza_de_tipo(&actual) != naturaleza_de_tipo(&nuevo);
+    let previo = cargar(&st, &id).await?;
+    if cambia {
+        if let Some(p) = &previo {
+            if body["reiniciar"] != true {
+                let (de, a_nat) = (naturaleza_de_tipo(&actual).to_lowercase(), naturaleza_de_tipo(&nuevo).to_lowercase());
+                return Ok(Json(json!({
+                    "requiereConfirmacion": true,
+                    "mensaje": format!(
+                        "Pasar de {actual} a {nuevo} cambia la plantilla de fases (de {de} a {a_nat}). El motor se reinicia con la plantilla nueva: se pierden las marcas de criterios y los entregables manuales de las fases actuales (se guarda un respaldo). Las tareas del Backlog y los archivos no se tocan. ¿Continuar?"
+                    ),
+                    "faseActual": p["faseActual"],
+                })));
+            }
+        }
+    }
+    let mut respaldo = String::new();
+    if cambia {
+        if let Some(p) = &previo {
+            // Respaldo ANTES de tocar nada: si no se puede guardar, no se cambia.
+            respaldo = new_id();
+            exec(
+                &st.pool,
+                r#"INSERT INTO "ProyectoFaseRespaldo" (id, "solucionId", motivo, datos) VALUES ($1, $2, $3, $4)"#,
+                &[B::T(respaldo.clone()), B::T(id.clone()), B::T(format!("Cambio de tipo de {actual} a {nuevo}")), B::J(p.clone())],
+            )
+            .await?;
+        }
+    }
+    exec(&st.pool, r#"UPDATE "Solucion" SET tipo = $2, "updatedAt" = NOW() WHERE id = $1"#, &[B::T(id.clone()), B::T(nuevo.clone())]).await?;
+    if let (true, Some(p)) = (cambia, &previo) {
+        exec(&st.pool, r#"DELETE FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await?;
+        historial(&st, &id, p["faseActual"].as_str().unwrap_or_default(), "CAMBIO_TIPO", &a, Some(&format!("Tipo cambiado de {actual} a {nuevo}: el motor se reinició con la plantilla nueva. Respaldo guardado (id {respaldo})."))).await;
+        if let Err(e) = iniciar_para(&st, &id, &a, None).await {
+            // Si no se pudo reiniciar, todo vuelve a como estaba.
+            let _ = exec(&st.pool, r#"UPDATE "Solucion" SET tipo = $2 WHERE id = $1"#, &[B::T(id.clone()), B::T(actual.clone())]).await;
+            let _ = exec(&st.pool, r#"DELETE FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await;
+            let entregables = if p["entregables"].is_null() { json!({}) } else { p["entregables"].clone() };
+            let _ = exec(
+                &st.pool,
+                r#"INSERT INTO "ProyectoFase" ("solucionId", plantilla, definicion, "faseActual", estado, criterios, entregables, "createdAt", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())"#,
+                &[B::T(id.clone()), B::T(p["plantilla"].as_str().unwrap_or_default().into()), B::J(p["definicion"].clone()), B::T(p["faseActual"].as_str().unwrap_or_default().into()), B::T(p["estado"].as_str().unwrap_or("EN_CURSO").into()), B::J(p["criterios"].clone()), B::J(entregables)],
+            )
+            .await;
+            return Err(e);
+        }
+    }
+    Ok(Json(json!({ "ok": true, "tipo": nuevo, "naturaleza": naturaleza_de_tipo(&nuevo), "reiniciado": cambia && previo.is_some(), "respaldo": (!respaldo.is_empty()).then_some(respaldo) })))
 }
 
 async fn iniciar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
