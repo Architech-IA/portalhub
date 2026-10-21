@@ -54,6 +54,10 @@ static INTERNA: LazyLock<Value> = LazyLock::new(|| serde_json::from_str(PLANTILL
 /// Comercial = lo que se le vende a un cliente (PROJECT, DEMO, PARTNERSHIP). Interno = lo que ArchitechIA hace para sí misma (PRODUCT, INTERN).
 /// Sale del campo `tipo` de la Solución: ese campo manda.
 pub(crate) fn naturaleza_de_tipo(tipo: &str) -> &'static str {
+    // La tabla de tipos de proyecto manda; si el tipo no está en ella (o aún no se cargó) vale la regla de siempre.
+    if let Some(n) = super::tipos::naturaleza_guardada(tipo) {
+        return n;
+    }
     match tipo {
         "PRODUCT" | "INTERN" => "INTERNO",
         _ => "COMERCIAL",
@@ -1038,8 +1042,6 @@ async fn iniciar_para(st: &AppState, id: &str, a: &Actor, elegida: Option<&str>)
     Ok(fase)
 }
 
-const TIPOS_VALIDOS: [&str; 5] = ["PROJECT", "DEMO", "PARTNERSHIP", "PRODUCT", "INTERN"];
-
 /// Cambia el tipo de una Solución. Si eso cambia su naturaleza (comercial ↔ interno) y el motor ya está iniciado, hay que reiniciarlo con la plantilla de la otra
 /// naturaleza: sin `reiniciar: true` solo se avisa de lo que se perdería; con él, primero se guarda un respaldo de su estado, y si el reinicio falla se deja todo como estaba.
 /// Las tareas del Backlog y los archivos no se tocan.
@@ -1049,8 +1051,8 @@ async fn cambiar_tipo(State(st): State<AppState>, se: Session, Path(id): Path<St
     }
     let a = actor(&se);
     let nuevo = s_no_vacio(&body, "tipo").unwrap_or_default();
-    if !TIPOS_VALIDOS.contains(&nuevo.as_str()) {
-        return Err(ApiError::bad_request("Tipo no válido: usa PROJECT, DEMO, PARTNERSHIP, PRODUCT o INTERN"));
+    if fetch_text_opt(&st.pool, r#"SELECT clave FROM "TipoProyecto" WHERE clave = $1 AND activo"#, &[B::T(nuevo.clone())]).await?.is_none() {
+        return Err(ApiError::bad_request("Tipo no válido o desactivado: elige uno de la lista de tipos de proyecto"));
     }
     let actual = fetch_text_opt(&st.pool, r#"SELECT tipo FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await?.ok_or_else(|| ApiError::not_found("Proyecto no encontrado"))?;
     if actual == nuevo {

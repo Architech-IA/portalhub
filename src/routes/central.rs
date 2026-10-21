@@ -248,8 +248,8 @@ async fn crear_iniciativa(State(st): State<AppState>, se: Session, Json(b): Json
     let nombre = texto("nombre").ok_or_else(|| ApiError::bad_request("Falta el nombre de la iniciativa"))?;
     let problema = texto("problema").ok_or_else(|| ApiError::bad_request("Falta describir el problema"))?;
     let tipo = texto("tipo").unwrap_or_else(|| "PRODUCT".into());
-    if naturaleza_de_tipo(&tipo) != "INTERNO" || !matches!(tipo.as_str(), "PRODUCT" | "INTERN") {
-        return Err(ApiError::bad_request("El tipo de una iniciativa interna es PRODUCT o INTERN"));
+    if crate::util::fetch_text_opt(&st.pool, r#"SELECT clave FROM "TipoProyecto" WHERE clave = $1 AND activo AND naturaleza = 'INTERNO'"#, &[B::T(tipo.clone())]).await?.is_none() {
+        return Err(ApiError::bad_request("El tipo de una iniciativa interna debe ser un tipo interno activo"));
     }
     let beneficio = b["beneficio"].as_f64().filter(|x| x.is_finite() && *x >= 0.0);
     let mut descripcion = format!("Problema: {problema}");

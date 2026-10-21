@@ -31,6 +31,7 @@ pub mod realtime;
 pub mod prospeccion;
 pub mod proyectos;
 pub mod seguimiento;
+pub mod tipos;
 pub mod triggers;
 pub mod solucion_hub;
 pub mod soluciones_ia;
@@ -66,6 +67,7 @@ pub fn router() -> Router<AppState> {
         .merge(ejecutor::router())
         .merge(fases::router())
         .merge(plantillas::router())
+        .merge(tipos::router())
         .merge(ficha::router())
         .merge(notas::router())
         .merge(central::router())

@@ -106,6 +106,7 @@ async fn main() {
     // Las plantillas de fases con los ajustes del editor (si los hay).
     routes::plantillas::cargar_efectivas(&state).await;
     routes::plantillas::propagar_fabrica(&state).await;
+    routes::tipos::iniciar_refresco(state.clone());
     if !modo_motor {
         routes::seguimiento::iniciar(state.clone());
     } else {
