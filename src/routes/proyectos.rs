@@ -1603,6 +1603,20 @@ async fn sesion_crear(State(st): State<AppState>, o: Opcional, Path(id): Path<St
         cierre = Value::Array(rol["cierre"].as_array().map(|a| a.iter().map(|t| json!({ "texto": t, "ok": false })).collect()).unwrap_or_default());
         fase_clave = Some(fc);
         rol_clave = Some(rc);
+    } else if let Some(fc) = s(&body, "fase").map(|f| f.trim().to_string()).filter(|f| !f.is_empty() && f.len() <= 40) {
+        // Una conversación libre de una fase (el asistente de la fase): queda ligada a ella, sin rol, para que cada fase tenga su propio chat.
+        let existe = fetch_text_opt(
+            &st.pool,
+            r#"SELECT "solucionId" FROM "ProyectoFase" WHERE "solucionId" = $1 AND EXISTS (SELECT 1 FROM jsonb_array_elements(definicion->'fases') f WHERE f->>'clave' = $2)"#,
+            &[B::T(id.clone()), B::T(fc.clone())],
+        )
+        .await?
+        .is_some();
+        if !existe {
+            return Err(ApiError::bad_request("Esa fase no existe en este proyecto"));
+        }
+        titulo_por_defecto = "Asistente de la fase".to_string();
+        fase_clave = Some(fc);
     }
     let titulo: String = s(&body, "titulo").map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(|t| t.chars().take(80).collect()).unwrap_or(titulo_por_defecto);
     let privada = crate::util::truthy(&body, "privada");
