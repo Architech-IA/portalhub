@@ -1189,6 +1189,44 @@ pub(crate) async fn marcar_criterio(st: &AppState, id: &str, quien: &str, fase: 
     Ok(())
 }
 
+/// El estado del motor de fases en texto, para el contexto de las sesiones de IA: es la fuente de verdad de en qué fase está el proyecto
+/// (el Cronograma y otros artefactos pueden estar desactualizados).
+pub(crate) async fn resumen_motor(st: &AppState, id: &str) -> Option<String> {
+    let est = cargar(st, id).await.ok().flatten()?;
+    let def = &est["definicion"];
+    let actual = est["faseActual"].as_str()?.to_string();
+    let idx = indice(def, &actual)?;
+    let estado = est["estado"].as_str().unwrap_or("EN_CURSO").to_string();
+    let fases = lista(def);
+    let tira: Vec<String> = fases
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let marca = if estado == "COMPLETADO" || i < idx {
+                "hecha"
+            } else if i == idx {
+                if estado == "CERRADO_PERDIDO" { "cerrada: oportunidad perdida" } else { "ACTUAL" }
+            } else {
+                "pendiente"
+            };
+            format!("{}. {} ({marca})", f["numero"], f["nombre"].as_str().unwrap_or(""))
+        })
+        .collect();
+    let f = fases.get(idx)?;
+    let crit: Vec<String> = criterios_fase(def, &est["criterios"], idx).iter().map(|c| format!("- [{}] {}", if c["ok"] == true { "x" } else { " " }, c["texto"].as_str().unwrap_or(""))).collect();
+    let entregables = entregables_para_sesion(st, id, &actual).await.unwrap_or_default();
+    Some(format!(
+        "MOTOR DE FASES (es la fuente de verdad de en qué fase está el proyecto y qué falta para pasar a la siguiente: si el Cronograma, el Plan de trabajo u otro artefacto dice otra cosa, manda el motor y debes señalar la diferencia).\nPlantilla: {}. Estado del motor: {estado}.\nFase actual: {}. {}.\nObjetivo de la fase: {}\nFases: {}\nCriterios de la puerta de la fase actual (aprueba: {}; los marca una persona):\n{}\n{entregables}",
+        def["nombre"].as_str().unwrap_or(""),
+        f["numero"],
+        f["nombre"].as_str().unwrap_or(""),
+        f["objetivo"].as_str().unwrap_or(""),
+        tira.join(" · "),
+        f["puerta"]["aprobador"].as_str().unwrap_or(""),
+        crit.join("\n"),
+    ))
+}
+
 /// Los criterios de la puerta de la fase actual con su estado (para la IA de las sesiones). None si el motor no está en curso.
 pub(crate) async fn criterios_actuales(st: &AppState, id: &str) -> Result<Option<(String, Vec<Value>)>, ApiError> {
     let Some(est) = cargar(st, id).await? else { return Ok(None) };

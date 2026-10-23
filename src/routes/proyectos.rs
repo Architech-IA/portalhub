@@ -351,7 +351,8 @@ struct Def {
     obligatoria: bool,
 }
 
-const DEFS: [Def; 14] = [
+const DEFS: [Def; 15] = [
+    Def { clave: "motor", etiqueta: "Fase del motor", prioridad: 0, max: 3500, obligatoria: true },
     Def { clave: "ficha", etiqueta: "Ficha del proyecto", prioridad: 1, max: 2500, obligatoria: true },
     Def { clave: "memoria", etiqueta: "Memoria del proyecto", prioridad: 2, max: 8000, obligatoria: false },
     Def { clave: "resumen", etiqueta: "Resumen de esta sesión", prioridad: 3, max: 3500, obligatoria: false },
@@ -427,6 +428,7 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
                 None => (String::new(), None, None),
             }
         }
+        "motor" => (super::fases::resumen_motor(st, c.solucion_id).await.unwrap_or_default(), None, None),
         "resumen" => (c.resumen.trim().to_string(), None, None),
         "prd" => (json_a_texto(g("prd")), g("updatedAt").map(String::from), None),
         "diseno" => (json_a_texto(g("disenoTecnico")), g("updatedAt").map(String::from), None),
@@ -1058,7 +1060,11 @@ async fn en_preventa(st: &AppState, se: &Value) -> bool {
 
 /// Texto del rol de la sesión (fase, objetivo, resultado esperado y lista de cierre con su estado) para el prompt.
 async fn texto_del_rol(st: &AppState, se: &Value) -> Option<String> {
-    let (fase, rol) = (se["faseClave"].as_str()?, se["rol"].as_str()?);
+    let fase = se["faseClave"].as_str()?;
+    // Una conversación libre ligada a una fase (el asistente de la fase) no tiene rol: solo se le dice de qué fase es.
+    let Some(rol) = se["rol"].as_str() else {
+        return Some(format!("ESTA CONVERSACIÓN ES DEL ASISTENTE DE LA FASE «{fase}» del motor de fases: ayudas con cualquier tema del proyecto, pero lo que se te pida sobre entregables, criterios de la puerta o notas se refiere a esa fase. Para saber en qué fase está el proyecto usa el bloque MOTOR DE FASES del contexto, no el Cronograma."));
+    };
     let plantilla = fetch_text_opt(&st.pool, r#"SELECT plantilla FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(se["solucionId"].as_str()?.to_string())]).await.ok().flatten()?;
     let r = super::fases::roles_de_fase(&plantilla, fase).into_iter().find(|r| r["clave"] == rol)?;
     let cierre: Vec<String> = se["cierre"].as_array().map(|a| a.iter().map(|c| format!("- [{}] {}", if c["ok"] == true { "x" } else { " " }, c["texto"].as_str().unwrap_or(""))).collect()).unwrap_or_default();
