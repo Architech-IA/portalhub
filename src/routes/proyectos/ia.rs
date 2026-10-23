@@ -787,6 +787,7 @@ pub(super) async fn decidir_accion(State(st): State<AppState>, o: Opcional, Path
             let resumen = match acc["tipo"].as_str() {
                 Some("NOTA") => {
                     crate::routes::notas::agregar_pestana(&st, &id, p["fase"].as_str().unwrap_or(""), p["titulo"].as_str().unwrap_or("Nota de la sesión"), p["texto"].as_str().unwrap_or(""), &format!("IA (sesión), confirmada por {}", u.nombre)).await?;
+                    crate::routes::fases::salida_aceptada(&st, &id, "nota").await;
                     format!("📝 **Nota agregada por {}:** «{}» quedó como pestaña nueva en las notas de la fase.", u.nombre, p["titulo"].as_str().unwrap_or(""))
                 }
                 Some("TAREAS") => {

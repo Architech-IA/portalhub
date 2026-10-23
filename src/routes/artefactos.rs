@@ -729,6 +729,7 @@ async fn propuesta_decidir(State(st): State<AppState>, sesion: Session, Path(pid
                 guardar_version(&st, &sol, &clave, &viejo, &format!("Antes de aceptar la propuesta «{}»", p["titulo"].as_str().unwrap_or("")), &nombre_de(&sesion)).await;
             }
             reabrir_si_aprobado(&st, &sol, &clave, &nombre_de(&sesion)).await;
+            super::fases::salida_aceptada(&st, &sol, &clave).await;
             "ACEPTADA"
         }
         Some("rechazar") => "RECHAZADA",

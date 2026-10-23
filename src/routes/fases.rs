@@ -424,6 +424,7 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                                 "backlogItemId": fila.map(|x| x["backlogItemId"].clone()).unwrap_or(Value::Null),
                                 "taskCode": fila.map(|x| x["taskCode"].clone()).unwrap_or(Value::Null),
                                 "status": fila.map(|x| x["status"].clone()).unwrap_or(Value::Null),
+                                "destino": destino_actividad(ctx["plantilla"].as_str().unwrap_or(""), clave, t),
                                 "assigneeName": fila.map(|x| x["assigneeName"].clone()).unwrap_or(Value::Null),
                                 "entregable": entregable_de_actividad(ctx["plantilla"].as_str().unwrap_or(""), clave, t)
                                     .and_then(|e| req.iter().find(|r| r["clave"] == e.as_str()).map(|r| json!({ "clave": r["clave"], "titulo": r["titulo"], "ok": r["ok"] }))),
@@ -710,8 +711,52 @@ async fn filas_actividades(st: &AppState, sol: &str) -> Vec<Value> {
     }
 }
 
-/// La tarea de una actividad pasa a hecha (al cerrar la sesión que la trabajó) o a en curso (al iniciarla con IA).
+/// Dónde deja su resultado una actividad: «nota» (la nota de la fase) o la clave del artefacto, según cómo se verifica su entregable.
+fn destino_actividad(plantilla: &str, fase: &str, act: &Value) -> Option<String> {
+    let e = entregable_de_actividad(plantilla, fase, act)?;
+    let r = requeridos_de_fase(plantilla, fase).into_iter().find(|r| r["clave"] == e.as_str())?;
+    match r["verifica"]["tipo"].as_str()? {
+        "nota_lead" => Some("nota".into()),
+        "documento" => r["verifica"]["clave"].as_str().map(String::from),
+        _ => None,
+    }
+}
+
+/// Se aceptó un resultado (una nota de la fase o una propuesta sobre un artefacto): las actividades en curso, trabajadas en una sesión de IA,
+/// cuyo resultado va a ese destino quedan hechas.
+pub(crate) async fn salida_aceptada(st: &AppState, sol: &str, destino: &str) {
+    let Some(est) = cargar(st, sol).await.ok().flatten() else { return };
+    let def = &est["definicion"];
+    let plantilla = est["plantilla"].as_str().unwrap_or_default();
+    for f in lista(def) {
+        let fase = f["clave"].as_str().unwrap_or_default();
+        for act in f["actividades"].as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+            if destino_actividad(plantilla, fase, act).as_deref() != Some(destino) {
+                continue;
+            }
+            let _ = exec(
+                &st.pool,
+                r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW()
+                    WHERE id = (SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3) AND status = 'IN_PROGRESS'
+                      AND EXISTS (SELECT 1 FROM "ProyectoSesion" WHERE "solucionId" = $1 AND "faseClave" = $2 AND "actividadClave" = $3)"#,
+                &[B::T(sol.into()), B::T(fase.into()), B::T(act["clave"].as_str().unwrap_or_default().into())],
+            )
+            .await;
+        }
+    }
+}
+
+/// Al cerrar la sesión de una actividad: si la actividad produce un resultado que hay que aceptar (nota o artefacto), queda en curso hasta que se acepte; si no, queda hecha.
 pub(super) async fn cerrar_actividad_de_sesion(st: &AppState, sol: &str, fase: &str, clave: &str) {
+    if let Some(est) = cargar(st, sol).await.ok().flatten() {
+        let def = &est["definicion"];
+        let act = indice(def, fase).and_then(|i| lista(def)[i]["actividades"].as_array().and_then(|a| a.iter().find(|x| x["clave"] == clave).cloned()));
+        if let Some(act) = act {
+            if destino_actividad(est["plantilla"].as_str().unwrap_or_default(), fase, &act).is_some() {
+                return;
+            }
+        }
+    }
     let _ = exec(
         &st.pool,
         r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW()
