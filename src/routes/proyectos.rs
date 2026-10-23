@@ -1135,6 +1135,9 @@ async fn sistema_para(st: &AppState, tipo: &str, rol: Option<&str>, nombre: &str
     if sin_repo && tipo != "BITACORA" {
         cabecera = format!("{cabecera}\n\n{}", if primer_mensaje { aviso_sin_repo_inicial() } else { RECORDATORIO_SIN_REPO.to_string() });
     }
+    let cabecera = format!("{cabecera}
+
+ESTILO: no uses emojis ni emoticonos en ninguna respuesta; usa solo texto (para marcar estados usa palabras o [x] / [ ]).");
     format!("{cabecera}\n\n===== CONTEXTO DEL PROYECTO =====\n{contexto}\n===== FIN DEL CONTEXTO =====")
 }
 
