@@ -1236,7 +1236,8 @@
           "area": "Client Delivery",
           "backlogType": "TASK",
           "prioridad": "MEDIUM",
-          "descripcion": "Sesión de capacitación, garantía y condiciones de soporte."
+          "descripcion": "Sesión de capacitación, garantía y condiciones de soporte.",
+          "entregable": "acta_cierre"
         },
         {
           "clave": "lecciones",

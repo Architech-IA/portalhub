@@ -1596,7 +1596,7 @@ async fn proyecto_obtener(State(st): State<AppState>, o: Opcional, Path(id): Pat
         &st.pool,
         r#"SELECT jsonb_build_object(
              'sesiones', COALESCE((SELECT jsonb_agg(jsonb_build_object('id', s.id, 'titulo', s.titulo, 'tipo', s.tipo, 'estado', s.estado, 'privada', s.privada, 'creadaPorId', s."creadaPorId",
-                    'creadaPorNombre', s."creadaPorNombre", 'cierreEstado', s."cierreEstado", 'faseClave', s."faseClave", 'rol', s.rol, 'cierre', s.cierre, 'createdAt', s."createdAt", 'updatedAt', s."updatedAt",
+                    'creadaPorNombre', s."creadaPorNombre", 'cierreEstado', s."cierreEstado", 'faseClave', s."faseClave", 'actividadClave', s."actividadClave", 'rol', s.rol, 'cierre', s.cierre, 'createdAt', s."createdAt", 'updatedAt', s."updatedAt",
                     'mensajes', (SELECT COUNT(*) FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id), 'mia', s."creadaPorId" = $2) ORDER BY s."updatedAt" DESC)
                   FROM "ProyectoSesion" s WHERE s."solucionId" = $1 AND ($3 OR s.estado <> 'ARCHIVADA') AND (s.privada = false OR s."creadaPorId" = $2)), '[]'::jsonb),
              'memoriaVersion', COALESCE((SELECT version FROM "ProyectoMemoria" WHERE "solucionId" = $1), 0),
@@ -1668,12 +1668,26 @@ async fn sesion_crear(State(st): State<AppState>, o: Opcional, Path(id): Path<St
     }
     let titulo: String = s(&body, "titulo").map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).map(|t| t.chars().take(80).collect()).unwrap_or(titulo_por_defecto);
     let privada = crate::util::truthy(&body, "privada");
+    let fase_de_actividad = fase_clave.clone();
+    let id_proyecto = id.clone();
     let fila = fetch_json(
         &st.pool,
         r#"WITH ins AS (INSERT INTO "ProyectoSesion" ("solucionId", titulo, tipo, privada, "creadaPorId", "creadaPorNombre", "faseClave", rol, cierre) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb) RETURNING *) SELECT to_jsonb(ins) FROM ins"#,
         &[B::T(id), B::T(titulo), B::T(tipo), B::Bo(privada), B::T(u.id), B::T(u.nombre), B::OT(fase_clave), B::OT(rol_clave), B::T(cierre.to_string())],
     )
     .await?;
+    // Una sesión nacida de una actividad de la fase: queda ligada a ella y la tarea pasa a en curso
+    let mut fila = fila;
+    if let (Some(k), Some(f)) = (s(&body, "actividad"), fase_de_actividad) {
+        let existe = fetch_text_opt(&st.pool, r#"SELECT clave FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3"#, &[B::T(id_proyecto.clone()), B::T(f.clone()), B::T(k.clone())]).await?.is_some();
+        if existe {
+            if let Some(sid) = fila["id"].as_str() {
+                exec(&st.pool, r#"UPDATE "ProyectoSesion" SET "actividadClave" = $2 WHERE id = $1"#, &[B::T(sid.into()), B::T(k.clone())]).await?;
+                fila["actividadClave"] = json!(k);
+            }
+            super::fases::empezar_actividad_de_sesion(&st, &id_proyecto, &f, &k).await;
+        }
+    }
     Ok((StatusCode::CREATED, Json(fila)))
 }
 
@@ -1864,6 +1878,9 @@ async fn sesion_cerrar(State(st): State<AppState>, o: Opcional, Path((id, sid)):
         return Err(ApiError::new(StatusCode::CONFLICT, "Espera a que la IA termine de responder para cerrar la sesión"));
     }
     let upd = fetch_json(&st.pool, r#"WITH up AS (UPDATE "ProyectoSesion" SET estado = 'CERRADA', "cierreEstado" = 'PROCESANDO', "updatedAt" = NOW() WHERE id = $1 RETURNING *) SELECT to_jsonb(up) FROM up"#, &[B::T(sid.clone())]).await?;
+    if let (Some(f), Some(k)) = (upd["faseClave"].as_str(), upd["actividadClave"].as_str()) {
+        super::fases::cerrar_actividad_de_sesion(&st, &id, f, k).await;
+    }
     tokio::spawn(procesar_cierre(st.clone(), sid));
     Ok(Json(upd))
 }

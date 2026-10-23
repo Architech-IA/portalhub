@@ -34,6 +34,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/tipo", post(cambiar_tipo))
         .route("/api/proyectos/{id}/fases/criterio", post(criterio))
         .route("/api/proyectos/{id}/fases/entregable", post(entregable))
+        .route("/api/proyectos/{id}/fases/actividad", post(actividad))
         .route("/api/proyectos/{id}/fases/avanzar", post(avanzar))
         .route("/api/proyectos/{id}/fases/retroceder", post(retroceder))
         .route("/api/proyectos/{id}/prd/versiones", get(prd_versiones))
@@ -249,6 +250,20 @@ pub(super) fn requeridos_de_fase(plantilla: &str, fase: &str) -> Vec<Value> {
     lista(plantilla_por_codigo(plantilla)).iter().find(|f| f["clave"] == fase).and_then(|f| f["requeridos"].as_array().cloned()).unwrap_or_default()
 }
 
+/// Título de la primera actividad creada de la fase, ligada a este entregable, que todavía no está hecha (ni cancelada).
+fn actividad_pendiente(ctx: &Value, fase: &str, clave: &str) -> Option<String> {
+    let pl = ctx["plantilla"].as_str()?;
+    let acts: Vec<Value> = lista(plantilla_por_codigo(pl)).iter().find(|f| f["clave"] == fase).and_then(|f| f["actividades"].as_array().cloned()).unwrap_or_default();
+    let filas = ctx["actividades"].as_array()?;
+    acts.iter()
+        .filter(|a| entregable_de_actividad(pl, fase, a).as_deref() == Some(clave))
+        .find(|a| {
+            let k = a["clave"].as_str().unwrap_or_default();
+            filas.iter().any(|x| x["fase"] == fase && x["clave"] == k && !matches!(x["status"].as_str().unwrap_or(""), "DONE" | "CANCELLED"))
+        })
+        .map(|a| a["titulo"].as_str().unwrap_or("actividad").to_string())
+}
+
 /// Evalúa un entregable requerido con lo que el sistema ya sabe (ctx) y lo que una persona marcó a mano (ctx.manuales).
 fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> Value {
     let v = &r["verifica"];
@@ -323,6 +338,11 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
             if m["ok"] == true { (true, "Marcado como listo".into()) } else { (false, "Sin marcar".into()) }
         }
     };
+    // Un entregable ligado a una actividad de la fase solo cuenta cuando esa actividad está hecha
+    let (ok, detalle) = match actividad_pendiente(ctx, fase, clave) {
+        Some(t) if ok => (false, format!("Falta cerrar la actividad «{t}»")),
+        _ => (ok, detalle),
+    };
     let m = &ctx["manuales"][fase][clave];
     let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "lead_registrado" | "ficha_cliente" | "ficha_contacto");
     json!({
@@ -345,6 +365,7 @@ pub(super) async fn entregables_para_sesion(st: &AppState, sol: &str, fase: &str
     let mut ctx = contexto_recursos(st, sol, lead_id.as_deref()).await.ok()?;
     ctx["plantilla"] = est["plantilla"].clone();
     ctx["manuales"] = est["entregables"].clone();
+    ctx["actividades"] = Value::Array(filas_actividades(st, sol).await);
     let ls = indice(def, fase).and_then(|i| lista(def)[i]["leadStatus"].as_str().map(String::from)).unwrap_or_default();
     let v = requeridos_vista(&ctx, fase, &ls);
     if v.is_empty() {
@@ -674,6 +695,70 @@ async fn notificar_admins(st: &AppState, sol: &str, titulo: &str, mensaje: &str)
     }
 }
 
+/// Las actividades creadas del proyecto con el estado de su tarea del Backlog.
+async fn filas_actividades(st: &AppState, sol: &str) -> Vec<Value> {
+    match fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', fa.fase, 'clave', fa.clave, 'backlogItemId', fa."backlogItemId", 'status', bi.status)), '[]'::jsonb)
+             FROM "FaseActividad" fa LEFT JOIN "BacklogItem" bi ON bi.id = fa."backlogItemId" WHERE fa."solucionId" = $1"#,
+        &[B::T(sol.into())],
+    )
+    .await
+    {
+        Ok(Value::Array(a)) => a,
+        _ => vec![],
+    }
+}
+
+/// La tarea de una actividad pasa a hecha (al cerrar la sesión que la trabajó) o a en curso (al iniciarla con IA).
+pub(super) async fn cerrar_actividad_de_sesion(st: &AppState, sol: &str, fase: &str, clave: &str) {
+    let _ = exec(
+        &st.pool,
+        r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW()
+            WHERE id = (SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3) AND status NOT IN ('DONE', 'CANCELLED')"#,
+        &[B::T(sol.into()), B::T(fase.into()), B::T(clave.into())],
+    )
+    .await;
+}
+
+pub(super) async fn empezar_actividad_de_sesion(st: &AppState, sol: &str, fase: &str, clave: &str) {
+    let _ = exec(
+        &st.pool,
+        r#"UPDATE "BacklogItem" SET status = 'IN_PROGRESS', "updatedAt" = NOW()
+            WHERE id = (SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3) AND status = 'BACKLOG'"#,
+        &[B::T(sol.into()), B::T(fase.into()), B::T(clave.into())],
+    )
+    .await;
+}
+
+/// Marca una actividad como hecha (o la reabre). Con una evidencia (enlace) y un entregable manual ligado a la actividad, el entregable también queda marcado.
+async fn actividad(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+    let a = exigir_puede(&se)?;
+    let est = cargar_iniciado(&st, &id).await?;
+    let fase = s_no_vacio(&body, "fase").ok_or_else(|| ApiError::bad_request("Falta la fase"))?;
+    let clave = s_no_vacio(&body, "clave").ok_or_else(|| ApiError::bad_request("Falta la actividad"))?;
+    let reabrir = s(&body, "accion").as_deref() == Some("reabrir");
+    let item = fetch_text_opt(&st.pool, r#"SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3"#, &[B::T(id.clone()), B::T(fase.clone()), B::T(clave.clone())])
+        .await?
+        .ok_or_else(|| ApiError::bad_request("Esa actividad todavía no se ha creado en el Backlog"))?;
+    let sql = if reabrir { r#"UPDATE "BacklogItem" SET status = 'BACKLOG', "updatedAt" = NOW() WHERE id = $1"# } else { r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW() WHERE id = $1"# };
+    exec(&st.pool, sql, &[B::T(item)]).await?;
+    let mut entregable_marcado = false;
+    if !reabrir {
+        if let Some(ev) = s_no_vacio(&body, "evidencia").filter(|e| e.starts_with("http://") || e.starts_with("https://")) {
+            let def = &est["definicion"];
+            let plantilla = est["plantilla"].as_str().unwrap_or_default();
+            let ent = indice(def, &fase)
+                .and_then(|i| lista(def)[i]["actividades"].as_array().and_then(|acts| acts.iter().find(|x| x["clave"] == clave.as_str()).cloned()))
+                .and_then(|act| entregable_de_actividad(plantilla, &fase, &act));
+            if let Some(e) = ent {
+                entregable_marcado = marcar_entregable(&st, &id, &fase, &e, &a.nombre, ev).await.is_ok();
+            }
+        }
+    }
+    Ok(Json(json!({ "ok": true, "entregableMarcado": entregable_marcado })))
+}
+
 /// Crea en el Backlog las tareas de la fase (una vez: la tabla `FaseActividad` lo garantiza).
 /// Entregable que una actividad ayuda a cumplir: el de su copia congelada o, si no lo trae, el de la plantilla vigente.
 fn entregable_de_actividad(plantilla: &str, fase: &str, act: &Value) -> Option<String> {
@@ -956,6 +1041,7 @@ async fn obtener(State(st): State<AppState>, se: Session, Path(id): Path<String>
         Value::Array(a) => a,
         _ => vec![],
     };
+    ctx["actividades"] = Value::Array(acts.clone());
     let hist = fetch_json(
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(to_jsonb(h) ORDER BY h."createdAt" DESC), '[]'::jsonb)
@@ -1318,6 +1404,7 @@ async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>
         let mut ctx = contexto_recursos(&st, &id, lead_id.as_deref()).await?;
         ctx["plantilla"] = est["plantilla"].clone();
         ctx["manuales"] = est["entregables"].clone();
+        ctx["actividades"] = Value::Array(filas_actividades(&st, &id).await);
         let ls = lista(def)[idx]["leadStatus"].as_str().unwrap_or_default().to_string();
         // En la puerta de resultado, perder la venta no exige entregables (solo ganarla).
         for r in requeridos_vista(&ctx, actual, &ls).iter().filter(|r| r["ok"] != true) {
