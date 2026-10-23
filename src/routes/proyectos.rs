@@ -351,11 +351,12 @@ struct Def {
     obligatoria: bool,
 }
 
-const DEFS: [Def; 15] = [
+const DEFS: [Def; 16] = [
     Def { clave: "motor", etiqueta: "Fase del motor", prioridad: 0, max: 3500, obligatoria: true },
     Def { clave: "ficha", etiqueta: "Ficha del proyecto", prioridad: 1, max: 2500, obligatoria: true },
     Def { clave: "memoria", etiqueta: "Memoria del proyecto", prioridad: 2, max: 8000, obligatoria: false },
     Def { clave: "resumen", etiqueta: "Resumen de esta sesión", prioridad: 3, max: 3500, obligatoria: false },
+    Def { clave: "previas", etiqueta: "Lo conversado antes en este proyecto", prioridad: 3, max: 4500, obligatoria: false },
     Def { clave: "prd", etiqueta: "PRD", prioridad: 4, max: 9000, obligatoria: false },
     Def { clave: "diseno", etiqueta: "Diseño técnico", prioridad: 5, max: 6000, obligatoria: false },
     Def { clave: "backlog", etiqueta: "Backlog", prioridad: 6, max: 4500, obligatoria: false },
@@ -430,6 +431,44 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
         }
         "motor" => (super::fases::resumen_motor(st, c.solucion_id).await.unwrap_or_default(), None, None),
         "resumen" => (c.resumen.trim().to_string(), None, None),
+        // Qué se habló o hizo en las otras sesiones del proyecto (las últimas seis con conversación; las privadas solo las ve quien las creó)
+        "previas" => {
+            let r = fetch_json(
+                &st.pool,
+                r#"SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x.act DESC), '[]'::jsonb) FROM (
+                     SELECT s.titulo, s."faseClave", s.rol, s.estado, s.resumen, s."updatedAt" AS act,
+                            (SELECT m.contenido FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id AND m.rol = 'user' AND m.estado = 'LISTO' ORDER BY m.orden ASC LIMIT 1) AS primero,
+                            (SELECT m.contenido FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id AND m.rol = 'assistant' AND m.estado = 'LISTO' ORDER BY m.orden DESC LIMIT 1) AS ultimo
+                       FROM "ProyectoSesion" s
+                      WHERE s."solucionId" = $1 AND s.id <> COALESCE($2, '') AND s.tipo <> 'BITACORA' AND s.estado <> 'ARCHIVADA' AND (NOT s.privada OR s."creadaPorId" = $3)
+                        AND (SELECT COUNT(*) FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id AND m.estado = 'LISTO') >= 2
+                      ORDER BY s."updatedAt" DESC LIMIT 6) x"#,
+                &[B::T(c.solucion_id.into()), B::OT(c.sesion_id.map(String::from)), B::T(c.usuario_id.into())],
+            )
+            .await?;
+            let lineas: Vec<String> = r
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|x| {
+                    let donde = match (x["faseClave"].as_str(), x["rol"].as_str()) {
+                        (Some(f), Some(r)) => format!("fase {f}, sesión «{r}»"),
+                        (Some(f), None) => format!("fase {f}, asistente de la fase"),
+                        _ => "proyecto".to_string(),
+                    };
+                    let quedo = x["resumen"].as_str().map(str::trim).filter(|t| !t.is_empty()).map(|t| corta(&t.replace('\n', " "), 600)).unwrap_or_else(|| {
+                        format!(
+                            "se preguntó: {} — última respuesta: {}",
+                            corta(&x["primero"].as_str().unwrap_or("").replace('\n', " "), 200),
+                            corta(&x["ultimo"].as_str().unwrap_or("").replace('\n', " "), 350)
+                        )
+                    });
+                    format!("- «{}» ({donde}; {}; {}): {quedo}", x["titulo"].as_str().unwrap_or(""), x["estado"].as_str().unwrap_or("").to_lowercase(), fecha_5(x["act"].as_str().unwrap_or("")))
+                })
+                .collect();
+            (lineas.join("\n"), None, None)
+        }
         "prd" => (json_a_texto(g("prd")), g("updatedAt").map(String::from), None),
         "diseno" => (json_a_texto(g("disenoTecnico")), g("updatedAt").map(String::from), None),
         "plan_ejec" => (json_a_texto(g("planEjecucion")), g("updatedAt").map(String::from), None),
@@ -1697,7 +1736,7 @@ async fn sesion_actualizar(State(st): State<AppState>, o: Opcional, Path((id, si
         hay = true;
     }
     if let Some(a) = b.get("fuentesExcluidas").and_then(|v| v.as_array()) {
-        const CLAVES: [&str; 14] = ["ficha", "memoria", "resumen", "prd", "diseno", "backlog", "adjuntos", "plan_ejec", "lead", "historial", "riesgos", "hitos", "cronograma", "plan_trabajo"];
+        const CLAVES: [&str; 15] = ["ficha", "memoria", "resumen", "prd", "diseno", "backlog", "adjuntos", "plan_ejec", "lead", "historial", "previas", "riesgos", "hitos", "cronograma", "plan_trabajo"];
         let fil: Vec<Value> = a.iter().filter(|x| x.as_str().map(|c| CLAVES.contains(&c) && c != "ficha").unwrap_or(false)).cloned().collect();
         up.set_expr("fuentesExcluidas", B::T(Value::Array(fil).to_string()), "{n}::jsonb");
         hay = true;
