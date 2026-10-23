@@ -1808,6 +1808,14 @@ async fn mensaje_enviar(State(st): State<AppState>, o: Opcional, Path((id, sid))
         let r = sqlx::query_as::<_, (String, String)>(r#"SELECT id, nombre FROM "ProyectoAdjunto" WHERE id = ANY($1::text[]) AND "solucionId" = $2"#).bind(&ids).bind(&id).fetch_all(&st.pool).await?;
         adjuntos = r.into_iter().map(|(i, n)| json!({ "id": i, "nombre": n })).collect();
     }
+    // Una actividad lanzada desde el chat (/tasks): esta conversación pasa a trabajarla y su tarea queda en curso
+    if let (Some(k), Some(f)) = (s(&b, "actividad"), se["faseClave"].as_str()) {
+        let existe = fetch_text_opt(&st.pool, r#"SELECT clave FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3"#, &[B::T(id.clone()), B::T(f.to_string()), B::T(k.clone())]).await?.is_some();
+        if existe {
+            exec(&st.pool, r#"UPDATE "ProyectoSesion" SET "actividadClave" = $2, "updatedAt" = NOW() WHERE id = $1"#, &[B::T(sid.clone()), B::T(k.clone())]).await?;
+            super::fases::empezar_actividad_de_sesion(&st, &id, f, &k).await;
+        }
+    }
     let mut tx = st.pool.begin().await?;
     let max: Option<i32> = sqlx::query_scalar(r#"SELECT MAX(orden) FROM "ProyectoMensaje" WHERE "sesionId" = $1"#).bind(&sid).fetch_one(&mut *tx).await?;
     let orden = max.unwrap_or(0) as i64 + 1;
