@@ -717,6 +717,7 @@ fn destino_actividad(plantilla: &str, fase: &str, act: &Value) -> Option<String>
     let r = requeridos_de_fase(plantilla, fase).into_iter().find(|r| r["clave"] == e.as_str())?;
     match r["verifica"]["tipo"].as_str()? {
         "nota_lead" => Some("nota".into()),
+        "ficha_cliente" => Some("ficha".into()),
         "documento" => r["verifica"]["clave"].as_str().map(String::from),
         _ => None,
     }

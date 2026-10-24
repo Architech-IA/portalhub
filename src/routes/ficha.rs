@@ -331,10 +331,17 @@ async fn actualizar(st: &AppState, tabla: &str, col_id: &str, id: &str, cambios:
 }
 
 async fn guardar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
+    let quien = if se.name.is_empty() { se.email.clone() } else { se.name.clone() };
+    guardar_datos(&st, &id, &quien, &body).await?;
+    obtener(State(st), se, Path(id)).await
+}
+
+/// Guarda en la ficha del proyecto los datos que lleguen (empresa, personas, oportunidad). La usan el formulario de la ficha y la IA al confirmar una propuesta.
+pub(crate) async fn guardar_datos(st: &AppState, id: &str, quien: &str, body: &Value) -> Result<(), ApiError> {
+    let (st, id, quien, body) = (st.clone(), id.to_string(), quien.to_string(), body.clone());
     if fetch_text_opt(&st.pool, r#"SELECT id FROM "Solucion" WHERE id = $1"#, &[B::T(id.clone())]).await?.is_none() {
         return Err(ApiError::not_found("Proyecto no encontrado"));
     }
-    let quien = if se.name.is_empty() { se.email.clone() } else { se.name.clone() };
     sembrar_desde_lead(&st, &id).await;
     exec(&st.pool, r#"INSERT INTO "ProyectoFicha" ("solucionId") VALUES ($1) ON CONFLICT ("solucionId") DO NOTHING"#, &[B::T(id.clone())]).await?;
     let mut cliente_id = fetch_text_opt(&st.pool, r#"SELECT "clienteId" FROM "ProyectoFicha" WHERE "solucionId" = $1"#, &[B::T(id.clone())]).await?;
@@ -437,7 +444,7 @@ async fn guardar(State(st): State<AppState>, se: Session, Path(id): Path<String>
         actualizar(&st, "Solucion", "id", &id, sol, true).await?;
     }
 
-    obtener(State(st), se, Path(id)).await
+    Ok(())
 }
 
 #[cfg(test)]
