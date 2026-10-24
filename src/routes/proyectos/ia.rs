@@ -793,6 +793,26 @@ async fn escribir(st: &AppState, nombre: &str, a: &Value, c: &CtxHerr<'_>) -> St
 }
 
 // ── Avisos pendientes de la sesión y su decisión ─────────────────────────────────────────────
+/// Tipos de propuesta para los que este proyecto dejó de pedir confirmación.
+pub(super) async fn auto_acciones_listar(State(st): State<AppState>, o: Opcional, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let _ = usuario(&o)?;
+    Ok(Json(fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(tipo ORDER BY tipo), '[]'::jsonb) FROM "ProyectoAutoAccion" WHERE "solucionId" = $1"#, &[B::T(id)]).await?))
+}
+
+pub(super) async fn auto_acciones_guardar(State(st): State<AppState>, o: Opcional, Path(id): Path<String>, Json(b): Json<Value>) -> ApiResult<Json<Value>> {
+    let u = usuario(&o)?;
+    if !puede_escribir(&st, &id, &u.id).await {
+        return Err(ApiError::forbidden("Solo la persona asignada al proyecto (o un administrador) cambia esto"));
+    }
+    let tipo = b["tipo"].as_str().filter(|t| ["FICHA", "NOTA", "TAREAS"].contains(t)).ok_or_else(|| ApiError::bad_request("Ese tipo de propuesta siempre pide confirmación"))?.to_string();
+    if b["activo"].as_bool().unwrap_or(true) {
+        exec(&st.pool, r#"INSERT INTO "ProyectoAutoAccion" ("solucionId", tipo, "porNombre") VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"#, &[B::T(id.clone()), B::T(tipo), B::T(u.nombre.clone())]).await?;
+    } else {
+        exec(&st.pool, r#"DELETE FROM "ProyectoAutoAccion" WHERE "solucionId" = $1 AND tipo = $2"#, &[B::T(id.clone()), B::T(tipo)]).await?;
+    }
+    auto_acciones_listar(State(st), o, Path(id)).await
+}
+
 pub(super) async fn listar_acciones(State(st): State<AppState>, o: Opcional, Path(id): Path<String>, Query(q): Query<HashMap<String, String>>) -> ApiResult<Json<Value>> {
     let u = usuario(&o)?;
     let sesion = q.get("sesionId").cloned().unwrap_or_default();

@@ -53,6 +53,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/sesiones/{sid}/dev/captura/{nombre}", get(ia::dev_captura))
         .route("/api/proyectos/{id}/variables-prueba", get(ia::variables_listar).put(ia::variables_guardar).delete(ia::variables_borrar))
         .route("/api/proyectos/{id}/acciones-ia", get(ia::listar_acciones))
+        .route("/api/proyectos/{id}/auto-acciones", get(ia::auto_acciones_listar).post(ia::auto_acciones_guardar))
         .route("/api/proyectos/{id}/acciones-ia/{aid}/decidir", post(ia::decidir_accion))
         .route("/api/proyectos/{id}/entregables/archivos", get(generados::listar))
         .route("/api/proyectos/{id}/entregables/archivos/{aid}/descargar", get(generados::descargar))
