@@ -187,7 +187,10 @@ async fn actualizar(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<Json<Value>> {
-    sesion.require_admin()?;
+    // La llave interna (bot de Telegram, MCP) también puede editar leads, igual que crearlos
+    if !sesion.is_service {
+        sesion.require_admin()?;
+    }
 
     let status_body = s(&body, "status");
     let outcome_body = s(&body, "outcome");
