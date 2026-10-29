@@ -58,8 +58,8 @@ impl Config {
             opencode_api_key: opcional("OPENCODE_API_KEY"),
             opencode_url: opcional("OPENCODE_URL")
                 .unwrap_or_else(|| "https://opencode.ai/zen/go/v1/chat/completions".to_string()),
-            opencode_model: opcional("OPENCODE_MODEL").unwrap_or_else(|| "qwen3.7-max".to_string()),
-            opencode_executor_model: opcional("OPENCODE_EXECUTOR_MODEL").unwrap_or_else(|| "qwen3.7-max".to_string()),
+            opencode_model: opcional("OPENCODE_MODEL").unwrap_or_else(|| "deepseek-v4.1-flash".to_string()),
+            opencode_executor_model: opcional("OPENCODE_EXECUTOR_MODEL").unwrap_or_else(|| "deepseek-v4.1-flash".to_string()),
             google_places_api_key: opcional("GOOGLE_PLACES_API_KEY"),
             google_client_id: opcional("GOOGLE_CLIENT_ID"),
             google_client_secret: opcional("GOOGLE_CLIENT_SECRET"),

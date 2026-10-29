@@ -161,7 +161,8 @@ pub async fn call_open_code_chat(
     let key = st.cfg.opencode_api_key.clone().unwrap_or_default();
     let mut todos = vec![json!({ "role": "system", "content": system })];
     todos.extend(mensajes.iter().cloned());
-    let mut cuerpo = json!({ "model": "qwen3.7-max", "messages": todos, "max_tokens": max_tokens });
+    // El modelo del chat del motor sale de OPENCODE_MODEL (por defecto DeepSeek V4.1 Flash): así un modelo retirado se cambia sin tocar el código
+    let mut cuerpo = json!({ "model": st.cfg.opencode_model, "messages": todos, "max_tokens": max_tokens });
     if let Some(t) = tools.filter(|t| t.as_array().map(|a| !a.is_empty()).unwrap_or(false)) {
         cuerpo["tools"] = t.clone();
     }

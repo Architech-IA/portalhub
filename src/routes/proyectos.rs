@@ -65,7 +65,6 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/suscripciones/{sub_id}/ejecutar", post(suscripcion_ejecutar))
 }
 
-const MODELO: &str = "qwen3.7-max";
 const PRESUPUESTO_TOTAL: usize = 48_000;
 const VENTANA_CHARS: usize = 14_000;
 const VENTANA_MIN: usize = 6;
@@ -1357,7 +1356,7 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
                 }
                 m
             }).collect::<Vec<_>>(),
-            "totalChars": ctx.total_chars, "modelo": MODELO, "ms": ms(t0),
+            "totalChars": ctx.total_chars, "modelo": st.cfg.opencode_model, "ms": ms(t0),
             "uso": { "promptTokens": uso.prompt, "cachedTokens": uso.cached, "completionTokens": uso.completion, "reasoningTokens": uso.reasoning },
             "cortada": cortada, "reintentoLength": reintento_length, "herramientas": herramientas,
             "ventana": { "desdeOrden": ini, "mensajes": en_ventana.len(), "conResumen": s["resumen"].as_str().map(|r| !r.is_empty()).unwrap_or(false) },
