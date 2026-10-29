@@ -166,49 +166,78 @@ pub async fn call_open_code_chat(
     if let Some(t) = tools.filter(|t| t.as_array().map(|a| !a.is_empty()).unwrap_or(false)) {
         cuerpo["tools"] = t.clone();
     }
-    for intento in 1..=MAX_INTENTOS {
-        let res = st
-            .http
-            .post("https://opencode.ai/zen/go/v1/chat/completions")
-            .bearer_auth(&key)
-            .header("x-opencode-session", session)
-            .timeout(Duration::from_secs(timeout_s))
-            .json(&cuerpo)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    "The operation was aborted due to timeout".to_string()
-                } else {
-                    "fetch failed".to_string()
-                }
-            })?;
-        let status = res.status();
-        if !status.is_success() {
-            let detalle = res.text().await.unwrap_or_default();
-            if es_filtro_de_contenido(&detalle) {
-                if intento < MAX_INTENTOS {
-                    continue;
-                }
-                return Err("El filtro de contenido del proveedor de IA bloqueó la respuesta (es un falso positivo intermitente). Vuelve a intentarlo o reformula un poco el pedido.".into());
-            }
-            let corto: String = detalle.chars().take(200).collect();
-            return Err(format!("El modelo respondió {}: {}", status.as_u16(), corto));
-        }
-        let data: Value = res.json().await.map_err(|_| "El modelo devolvió una respuesta vacía.".to_string())?;
-        registrar_uso(st, session, &data);
-        let choice = data.pointer("/choices/0").cloned().unwrap_or(Value::Null);
-        let message = choice.get("message").cloned().unwrap_or_else(|| json!({ "role": "assistant", "content": "" }));
-        let content = message.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-        let usage = data.get("usage").and_then(|u| {
-            Some(Uso {
-                prompt: u.get("prompt_tokens")?.as_i64()?,
-                cached: u.pointer("/prompt_tokens_details/cached_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
-                completion: u.get("completion_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
-                reasoning: u.pointer("/completion_tokens_details/reasoning_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
-            })
-        });
-        return Ok(RespuestaModelo { content, usage, finish: choice.get("finish_reason").and_then(|f| f.as_str()).map(String::from), message });
+    // Modelos a probar: el principal y, si el proveedor está saturado o caído, uno de respaldo (OPENCODE_FALLBACK_MODEL; por defecto qwen3.8-max)
+    let mut modelos = vec![st.cfg.opencode_model.clone()];
+    let respaldo = std::env::var("OPENCODE_FALLBACK_MODEL").ok().filter(|m| !m.trim().is_empty()).unwrap_or_else(|| "qwen3.8-max".to_string());
+    if respaldo != modelos[0] {
+        modelos.push(respaldo);
     }
-    Err("No se pudo obtener respuesta del modelo.".into())
+    let mut ultimo_error = String::from("No se pudo obtener respuesta del modelo.");
+    for (indice_modelo, modelo) in modelos.iter().enumerate() {
+        cuerpo["model"] = json!(modelo);
+        let mut filtro = 0u32;
+        let mut transitorios = 0u32;
+        loop {
+            let res = st
+                .http
+                .post("https://opencode.ai/zen/go/v1/chat/completions")
+                .bearer_auth(&key)
+                .header("x-opencode-session", session)
+                .timeout(Duration::from_secs(timeout_s))
+                .json(&cuerpo)
+                .send()
+                .await
+                .map_err(|e| {
+                    if e.is_timeout() {
+                        "The operation was aborted due to timeout".to_string()
+                    } else {
+                        "fetch failed".to_string()
+                    }
+                })?;
+            let status = res.status();
+            if !status.is_success() {
+                let detalle = res.text().await.unwrap_or_default();
+                if es_filtro_de_contenido(&detalle) {
+                    filtro += 1;
+                    if filtro < MAX_INTENTOS {
+                        continue;
+                    }
+                    return Err("El filtro de contenido del proveedor de IA bloqueó la respuesta (es un falso positivo intermitente). Vuelve a intentarlo o reformula un poco el pedido.".into());
+                }
+                let corto: String = detalle.chars().take(200).collect();
+                ultimo_error = format!("El modelo respondió {}: {}", status.as_u16(), corto);
+                // Saturación o caída pasajera del proveedor (429, 502, 503, 504, 529): se espera lo que pide y se reintenta; si sigue, se prueba el modelo de respaldo
+                if matches!(status.as_u16(), 429 | 502 | 503 | 504 | 529) {
+                    if transitorios < 2 {
+                        transitorios += 1;
+                        let pedida = detalle.split("after ").nth(1).and_then(|t| t.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<u64>().ok());
+                        let espera = pedida.unwrap_or(4 * transitorios as u64).clamp(2, 20);
+                        tracing::warn!("[opencode] {} con {modelo}: reintento {transitorios}/2 en {espera}s", status.as_u16());
+                        tokio::time::sleep(Duration::from_secs(espera)).await;
+                        continue;
+                    }
+                    if indice_modelo + 1 < modelos.len() {
+                        tracing::warn!("[opencode] {modelo} sigue saturado: se usa el modelo de respaldo");
+                        break;
+                    }
+                }
+                return Err(ultimo_error);
+            }
+            let data: Value = res.json().await.map_err(|_| "El modelo devolvió una respuesta vacía.".to_string())?;
+            registrar_uso(st, session, &data);
+            let choice = data.pointer("/choices/0").cloned().unwrap_or(Value::Null);
+            let message = choice.get("message").cloned().unwrap_or_else(|| json!({ "role": "assistant", "content": "" }));
+            let content = message.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+            let usage = data.get("usage").and_then(|u| {
+                Some(Uso {
+                    prompt: u.get("prompt_tokens")?.as_i64()?,
+                    cached: u.pointer("/prompt_tokens_details/cached_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
+                    completion: u.get("completion_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
+                    reasoning: u.pointer("/completion_tokens_details/reasoning_tokens").and_then(|x| x.as_i64()).unwrap_or(0),
+                })
+            });
+            return Ok(RespuestaModelo { content, usage, finish: choice.get("finish_reason").and_then(|f| f.as_str()).map(String::from), message });
+        }
+    }
+    Err(ultimo_error)
 }
