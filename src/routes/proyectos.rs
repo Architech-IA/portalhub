@@ -57,6 +57,16 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/acciones-ia/{aid}/decidir", post(ia::decidir_accion))
         .route("/api/proyectos/{id}/entregables/archivos", get(generados::listar))
         .route("/api/proyectos/{id}/entregables/archivos/{aid}/descargar", get(generados::descargar))
+        .route("/api/proyectos/{id}/entregables/{fase}/{clave}/archivo", post(generados::subir))
+        .route("/api/proyectos/{id}/documentos", get(documentos::listar))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}", get(documentos::obtener).put(documentos::guardar))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/versiones", get(documentos::versiones))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/versiones/{n}", get(documentos::version))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/restaurar", post(documentos::restaurar))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/propuesta", post(documentos::decidir))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/seccion-ia", post(documentos::seccion_ia))
+        .route("/api/proyectos/{id}/documentos/{fase}/{clave}/exportar", get(documentos::exportar))
+        .route("/api/proyectos/{id}/sesiones/{sid}/documentos/{clave}/generar", post(documentos::generar))
         .route("/api/proyectos/{id}/entregables/archivos/{aid}/decidir", post(generados::decidir))
         .route("/api/proyectos/{id}/sesiones/{sid}/plan", post(plan_proponer))
         .route("/api/proyectos/{id}/sesiones/{sid}/plan/aplicar", post(plan_aplicar))
@@ -110,6 +120,7 @@ async fn sesion_visible(st: &AppState, solucion_id: &str, sesion_id: &str, u: &U
     Ok(fila.filter(|f| !(f["privada"] == true && f["creadaPorId"].as_str() != Some(u.id.as_str()))))
 }
 
+mod documentos;
 mod generados;
 mod ia;
 
@@ -256,7 +267,20 @@ impl Resultado {
     }
 }
 
-async fn buscar_proyecto(st: &AppState, solucion_id: &str, q: &str, usuario_id: &str, excluir: Option<&str>, limite: Option<i64>, solo_mensajes: bool) -> Result<Vec<Resultado>, sqlx::Error> {
+/// Como `texto_fase` pero sin las pestañas creadas por la IA (su nombre termina en «· IA»).
+fn texto_fase_sin_ia(content: &str) -> String {
+    let Some(tabs) = serde_json::from_str::<Value>(content).ok().and_then(|v| v["tabs"].as_array().cloned()) else { return texto_fase(Some(content)) };
+    tabs.iter()
+        .filter(|t| !t["name"].as_str().unwrap_or("").trim_end().ends_with("· IA"))
+        .filter_map(|t| {
+            let c = html_a_texto_plano(t["content"].as_str().unwrap_or(""));
+            if c.is_empty() { None } else { Some(format!("[{}] {}", t["name"].as_str().filter(|x| !x.is_empty()).unwrap_or("Nota"), c.replace('\n', " "))) }
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+async fn buscar_proyecto(st: &AppState, solucion_id: &str, q: &str, usuario_id: &str, excluir: Option<&str>, limite: Option<i64>, solo_mensajes: bool, posteriores: &str, corte: Option<&str>) -> Result<Vec<Resultado>, sqlx::Error> {
     let consulta: String = q.trim().chars().take(300).collect();
     if consulta.is_empty() {
         return Ok(vec![]);
@@ -269,9 +293,11 @@ async fn buscar_proyecto(st: &AppState, solucion_id: &str, q: &str, usuario_id: 
                FROM "ProyectoMensaje" m JOIN "ProyectoSesion" s ON s.id = m."sesionId", websearch_to_tsquery('spanish', $2) query
               WHERE s."solucionId" = $1 AND m.estado = 'LISTO' AND m.tsv @@ query AND (s.privada = false OR s."creadaPorId" = $3)
                 AND ($5::text IS NULL OR s.id <> $5)
+                AND (s."faseClave" IS NULL OR s."faseClave" NOT IN (SELECT jsonb_array_elements_text($6::text::jsonb)))
+                AND (s."faseClave" IS NOT NULL OR $7::text IS NULL OR s."createdAt" < $7::text::timestamp)
               ORDER BY rank DESC LIMIT $4) x"#
     );
-    let mens = fetch_json(&st.pool, &sql, &[B::T(solucion_id.into()), B::T(consulta.clone()), B::T(usuario_id.into()), B::I(limite), B::OT(excluir.map(String::from))]).await?;
+    let mens = fetch_json(&st.pool, &sql, &[B::T(solucion_id.into()), B::T(consulta.clone()), B::T(usuario_id.into()), B::I(limite), B::OT(excluir.map(String::from)), B::T(posteriores.into()), B::OT(corte.map(String::from))]).await?;
     for r in mens.as_array().cloned().unwrap_or_default() {
         out.push(Resultado {
             tipo: "MENSAJE",
@@ -338,7 +364,7 @@ async fn buscar(State(st): State<AppState>, o: Opcional, Path(id): Path<String>,
     if texto.trim().chars().count() < 2 {
         return Ok(Json(json!([])));
     }
-    let r = buscar_proyecto(&st, &id, &texto, &u.id, None, Some(20), false).await?;
+    let r = buscar_proyecto(&st, &id, &texto, &u.id, None, Some(20), false, "[]", None).await?;
     Ok(Json(Value::Array(r.iter().map(|x| x.json()).collect())))
 }
 
@@ -351,7 +377,7 @@ struct Def {
     obligatoria: bool,
 }
 
-const DEFS: [Def; 16] = [
+const DEFS: [Def; 17] = [
     Def { clave: "motor", etiqueta: "Fase del motor", prioridad: 0, max: 3500, obligatoria: true },
     Def { clave: "ficha", etiqueta: "Ficha del proyecto", prioridad: 1, max: 2500, obligatoria: true },
     Def { clave: "memoria", etiqueta: "Memoria del proyecto", prioridad: 2, max: 8000, obligatoria: false },
@@ -361,6 +387,7 @@ const DEFS: [Def; 16] = [
     Def { clave: "diseno", etiqueta: "Diseño técnico", prioridad: 5, max: 6000, obligatoria: false },
     Def { clave: "backlog", etiqueta: "Backlog", prioridad: 6, max: 4500, obligatoria: false },
     Def { clave: "adjuntos", etiqueta: "Adjuntos del proyecto", prioridad: 7, max: 9000, obligatoria: false },
+    Def { clave: "documentos", etiqueta: "Documentos escritos en el portal", prioridad: 7, max: 9000, obligatoria: false },
     Def { clave: "plan_ejec", etiqueta: "Plan de ejecución", prioridad: 8, max: 4000, obligatoria: false },
     Def { clave: "lead", etiqueta: "Lead y cliente", prioridad: 9, max: 4500, obligatoria: false },
     Def { clave: "historial", etiqueta: "Otras sesiones (coincidencias)", prioridad: 10, max: 3500, obligatoria: false },
@@ -396,6 +423,13 @@ struct Ctx<'a> {
     resumen: &'a str,
     usuario_id: &'a str,
     consulta: Option<&'a str>,
+    /// Fases posteriores a la del contexto, en JSON: su trabajo todavía no existe y no entra.
+    posteriores: &'a str,
+    /// «fase:entregable» del documento que se está redactando (su texto viejo no entra; el asistente lo recibe aparte).
+    excluir_doc: &'a str,
+    pos: Option<&'a super::fases::Posicion>,
+    /// Momento en que empezó el trabajo de fases posteriores (sesiones o documentos); lo creado desde entonces sin fase asignada no cuenta.
+    corte: Option<&'a str>,
 }
 
 /// `(texto, actualizado, nota)` de una fuente.
@@ -418,12 +452,47 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
             if let Some(d) = g("descripcion") {
                 l.push(format!("Descripción: {}", html_a_texto_plano(d)));
             }
+            // Cliente, contacto principal, fuente y responsable (lo que consta en la ficha del cliente y en el lead)
+            let fc = fetch_json_opt(
+                &st.pool,
+                r#"SELECT jsonb_build_object('industria', cl.industria, 'pais', cl.pais, 'ciudad', cl.ciudad, 'sitioWeb', cl."sitioWeb", 'fuente', f.fuente, 'responsable', f."responsableNombre",
+                          'contacto', cc.nombre, 'cargo', cc.cargo, 'correo', cc.correo, 'telefono', cc.telefono, 'leadAlta', l."createdAt"::text)
+                   FROM "Solucion" s LEFT JOIN "ProyectoFicha" f ON f."solucionId" = s.id LEFT JOIN "Cliente" cl ON cl.id = f."clienteId"
+                   LEFT JOIN "ClienteContacto" cc ON cc."clienteId" = cl.id AND cc.rol = 'PRINCIPAL' LEFT JOIN "Lead" l ON l.id = s."leadId" WHERE s.id = $1 LIMIT 1"#,
+                &[B::T(c.solucion_id.into())],
+            )
+            .await
+            .ok()
+            .flatten();
+            if let Some(fc) = fc {
+                for (k, et) in [("industria", "Industria"), ("pais", "País"), ("ciudad", "Ciudad"), ("sitioWeb", "Sitio web"), ("fuente", "Fuente de la oportunidad"), ("responsable", "Responsable interno"), ("contacto", "Contacto principal"), ("cargo", "Cargo del contacto"), ("correo", "Correo del contacto"), ("telefono", "Teléfono del contacto")] {
+                    if let Some(v) = fc[k].as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                        l.push(format!("{et}: {v}"));
+                    }
+                }
+                if let Some(v) = fc["leadAlta"].as_str() {
+                    l.push(format!("Lead registrado: {}", fecha_5(v)));
+                }
+            }
             l.push(format!("Creado: {} | Última modificación: {}", fecha_5(g("createdAt").unwrap_or("")), fecha_5(g("updatedAt").unwrap_or(""))));
             l.push(format!("Hoy: {} (UTC-5)", hoy_5()));
             (l.join("\n"), g("updatedAt").map(String::from), None)
         }
         "memoria" => {
-            let m = fetch_json_opt(&st.pool, r#"SELECT to_jsonb(m) FROM "ProyectoMemoria" m WHERE m."solucionId" = $1"#, &[B::T(c.solucion_id.into())]).await?;
+            // Si ya hay sesiones o documentos de fases posteriores, la memoria se toma como estaba antes de que empezaran.
+            let corte = c.corte.map(String::from);
+            let m = match corte {
+                None => fetch_json_opt(&st.pool, r#"SELECT to_jsonb(m) FROM "ProyectoMemoria" m WHERE m."solucionId" = $1"#, &[B::T(c.solucion_id.into())]).await?,
+                Some(t) => {
+                    fetch_json_opt(
+                        &st.pool,
+                        r#"SELECT jsonb_build_object('contenido', v.contenido, 'version', v.version, 'updatedAt', v."createdAt") FROM "ProyectoMemoriaVersion" v
+                            WHERE v."solucionId" = $1 AND v."createdAt" < $2::text::timestamp ORDER BY v.version DESC LIMIT 1"#,
+                        &[B::T(c.solucion_id.into()), B::T(t)],
+                    )
+                    .await?
+                }
+            };
             match m {
                 Some(m) => (m["contenido"].as_str().unwrap_or("").trim().to_string(), m["updatedAt"].as_str().map(String::from), Some(format!("versión {}", m["version"]))),
                 None => (String::new(), None, None),
@@ -441,9 +510,11 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
                             (SELECT m.contenido FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id AND m.rol = 'assistant' AND m.estado = 'LISTO' ORDER BY m.orden DESC LIMIT 1) AS ultimo
                        FROM "ProyectoSesion" s
                       WHERE s."solucionId" = $1 AND s.id <> COALESCE($2, '') AND s.tipo <> 'BITACORA' AND s.estado <> 'ARCHIVADA' AND (NOT s.privada OR s."creadaPorId" = $3)
+                        AND (s."faseClave" IS NULL OR s."faseClave" NOT IN (SELECT jsonb_array_elements_text($4::text::jsonb)))
+                        AND (s."faseClave" IS NOT NULL OR $5::text IS NULL OR s."createdAt" < $5::text::timestamp)
                         AND (SELECT COUNT(*) FROM "ProyectoMensaje" m WHERE m."sesionId" = s.id AND m.estado = 'LISTO') >= 2
                       ORDER BY s."updatedAt" DESC LIMIT 6) x"#,
-                &[B::T(c.solucion_id.into()), B::OT(c.sesion_id.map(String::from)), B::T(c.usuario_id.into())],
+                &[B::T(c.solucion_id.into()), B::OT(c.sesion_id.map(String::from)), B::T(c.usuario_id.into()), B::T(c.posteriores.into()), B::OT(c.corte.map(String::from))],
             )
             .await?;
             let lineas: Vec<String> = r
@@ -496,6 +567,31 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
                 (format!("Totales por estado: {totales}\nÚltimas modificadas:\n{lista}"), items[0]["updatedAt"].as_str().map(String::from), None)
             }
         }
+        "documentos" => {
+            let d = fetch_json(
+                &st.pool,
+                r#"SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY x."updatedAt" DESC), '[]'::jsonb) FROM (SELECT titulo, "faseClave", contenido, "updatedAt" FROM "ProyectoDocumento" WHERE "solucionId" = $1 AND btrim(contenido) <> '' AND "faseClave" NOT IN (SELECT jsonb_array_elements_text($2::text::jsonb)) AND ("faseClave" || ':' || "entregableClave") <> $3 ORDER BY "updatedAt" DESC LIMIT 12) x"#,
+                &[B::T(c.solucion_id.into()), B::T(c.posteriores.into()), B::T(c.excluir_doc.into())],
+            )
+            .await?;
+            let docs = d.as_array().cloned().unwrap_or_default();
+            if docs.is_empty() {
+                (String::new(), None, None)
+            } else {
+                let mut usado = 0usize;
+                let mut partes = vec![];
+                for x in &docs {
+                    if usado >= 8500 {
+                        break;
+                    }
+                    let t = corta(&documentos::a_texto(x["contenido"].as_str().unwrap_or("")), 2500);
+                    usado += t.chars().count();
+                    partes.push(format!("### {} (fase {})\n{t}", x["titulo"].as_str().unwrap_or("Documento"), x["faseClave"].as_str().unwrap_or("")));
+                }
+                let reciente = docs.iter().filter_map(|d| d["updatedAt"].as_str()).max().map(String::from);
+                (partes.join("\n\n"), reciente, Some(format!("{} de {} incluidos", partes.len(), docs.len())))
+            }
+        }
         "adjuntos" => {
             let docs = fetch_json(
                 &st.pool,
@@ -542,8 +638,11 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
             let fases = d["fases"].as_array().cloned().unwrap_or_default();
             let notas = FASES_LEAD
                 .iter()
+                .filter(|f| c.pos.map(|p| p.nota_lead(f.0)).unwrap_or(true))
                 .map(|f| {
-                    let t = texto_fase(fases.iter().find(|x| x["phase"].as_str() == Some(f.0)).and_then(|x| x["content"].as_str()));
+                    let crudo = fases.iter().find(|x| x["phase"].as_str() == Some(f.0)).and_then(|x| x["content"].as_str());
+                    // Al redactar un documento de esta fase, las pestañas creadas por la IA en la nota de la fase actual (copias de lo que se está regenerando) no cuentan como información.
+                    let t = if !c.excluir_doc.is_empty() && c.pos.map(|p| p.lead_actual == f.0).unwrap_or(false) { texto_fase_sin_ia(crudo.unwrap_or("")) } else { texto_fase(crudo) };
                     if t.is_empty() {
                         String::new()
                     } else {
@@ -569,7 +668,7 @@ async fn construir_fuente(st: &AppState, clave: &str, c: &Ctx<'_>) -> Result<(St
         "historial" => match c.consulta {
             None => (String::new(), None, Some("depende de cada pregunta".into())),
             Some(q) => {
-                let r = buscar_proyecto(st, c.solucion_id, q, c.usuario_id, c.sesion_id, Some(6), true).await?;
+                let r = buscar_proyecto(st, c.solucion_id, q, c.usuario_id, c.sesion_id, Some(6), true, c.posteriores, c.corte).await?;
                 (r.iter().map(|x| format!("- [Sesión: {}] {}", x.sesion_titulo.clone().unwrap_or_default(), x.fragmento.replace(['«', '»'], ""))).collect::<Vec<_>>().join("\n"), None, None)
             }
         },
@@ -610,7 +709,22 @@ async fn construir_contexto(st: &AppState, solucion_id: &str, sesion: Option<&Va
     let Some(sol) = fetch_json_opt(&st.pool, r#"SELECT to_jsonb(s) FROM "Solucion" s WHERE s.id = $1"#, &[B::T(solucion_id.into())]).await? else { return Ok(None) };
     let excluidas: Vec<String> = sesion.and_then(|s| s["fuentesExcluidas"].as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     let resumen = sesion.and_then(|s| s["resumen"].as_str()).unwrap_or("");
-    let ctx = Ctx { sol: &sol, solucion_id, sesion_id: sesion.and_then(|s| s["id"].as_str()), resumen, usuario_id, consulta };
+    // Regla secuencial: una fase solo conoce lo producido hasta ella; lo de fases posteriores se marca «fuera de esta fase» y no entra.
+    let pos = super::fases::posicion(st, solucion_id, sesion.and_then(|s| s["faseClave"].as_str())).await;
+    let post_json = serde_json::to_string(&pos.as_ref().map(|p| p.posteriores.clone()).unwrap_or_default()).unwrap_or_else(|_| "[]".into());
+    let corte: Option<String> = fetch_json_opt(
+        &st.pool,
+        r#"SELECT to_jsonb(corte) FROM (SELECT MIN(t)::text AS corte FROM (
+             SELECT "createdAt" AS t FROM "ProyectoSesion" WHERE "solucionId" = $1 AND "faseClave" IN (SELECT jsonb_array_elements_text($2::text::jsonb))
+             UNION ALL
+             SELECT "createdAt" FROM "ProyectoDocumento" WHERE "solucionId" = $1 AND "faseClave" IN (SELECT jsonb_array_elements_text($2::text::jsonb))) x) y"#,
+        &[B::T(solucion_id.into()), B::T(post_json.clone())],
+    )
+    .await
+    .ok()
+    .flatten()
+    .and_then(|v| v.as_str().map(String::from));
+    let ctx = Ctx { sol: &sol, solucion_id, sesion_id: sesion.and_then(|s| s["id"].as_str()), resumen, usuario_id, consulta, posteriores: &post_json, excluir_doc: sesion.and_then(|s| s["excluirDoc"].as_str()).unwrap_or(""), pos: pos.as_ref(), corte: corte.as_deref() };
 
     let mut fuentes: Vec<Value> = vec![];
     struct Cand {
@@ -624,6 +738,14 @@ async fn construir_contexto(st: &AppState, solucion_id: &str, sesion: Option<&Va
         if excluidas.iter().any(|e| e == def.clave) && !def.obligatoria {
             fuentes.push(base("excluida"));
             continue;
+        }
+        if let Some(p) = &pos {
+            if !def.obligatoria && !p.disponible(def.clave) {
+                let mut f = base("fuera_de_fase");
+                f["nota"] = json!(format!("nace en una fase posterior a «{}»; todavía no existe en este punto del proceso", p.nombre));
+                fuentes.push(f);
+                continue;
+            }
         }
         let (texto, actualizado, nota) = match construir_fuente(st, def.clave, &ctx).await {
             Ok(r) => r,
@@ -693,6 +815,17 @@ async fn construir_contexto(st: &AppState, solucion_id: &str, sesion: Option<&Va
             fuentes[c.idx]["chars"] = json!(0);
             fuentes[c.idx]["nota"] = unir("omitida: no cabe en el presupuesto total de contexto");
         }
+    }
+    if let Some(p) = &pos {
+        let aun: Vec<&str> = fuentes.iter().filter(|f| f["estado"] == "fuera_de_fase").filter_map(|f| f["etiqueta"].as_str()).collect();
+        let mut nota = format!(
+            "## Dónde estás en el proceso\nEstás en la fase {} de {} («{}»). Aquí solo cuenta lo producido hasta esta fase: el trabajo de las fases siguientes todavía no existe para ti, así que no lo uses ni lo supongas.",
+            p.numero, p.total, p.nombre
+        );
+        if !aun.is_empty() {
+            nota.push_str(&format!(" Aún no existe: {}.", aun.join(", ")));
+        }
+        partes.insert(0, nota);
     }
     Ok(Some(Contexto { texto: partes.join("\n\n"), fuentes, total_chars: usado, sol }))
 }
@@ -804,7 +937,7 @@ async fn ejecutar_herramienta(st: &AppState, nombre: &str, args_json: &str, c: &
                 if q.is_empty() {
                     return Ok("Error: falta «consulta».".into());
                 }
-                let r = buscar_proyecto(st, c.solucion_id, &q, c.usuario_id, None, Some(10), false).await?;
+                let r = buscar_proyecto(st, c.solucion_id, &q, c.usuario_id, None, Some(10), false, "[]", None).await?;
                 if r.is_empty() {
                     "Sin coincidencias.".into()
                 } else {
@@ -1273,9 +1406,9 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
         }
         let mut conversacion: Vec<Value> = en_ventana.iter().map(|m| json!({ "role": m.rol, "content": m.contenido })).collect();
         // Una sesión de desarrollo itera muchas veces (editar, probar, corregir): más rondas, más tiempo y respuestas más largas.
-        let (max_rondas, respuesta_max_ms) = if es_dev { (60usize, 45 * 60_000i64) } else { (MAX_RONDAS_HERRAMIENTAS, RESPUESTA_MAX_MS) };
+        let (max_rondas, respuesta_max_ms) = if es_dev { (60usize, 45 * 60_000i64) } else { (if fase_sesion.is_some() { 12 } else { MAX_RONDAS_HERRAMIENTAS }, RESPUESTA_MAX_MS) };
         let max_tokens: u32 = std::env::var("PROYECTOS_MAX_TOKENS").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(3500);
-        let max_tokens = if es_dev { max_tokens.max(8000) } else { max_tokens };
+        let max_tokens = if es_dev || fase_sesion.is_some() { max_tokens.max(8000) } else { max_tokens };
         let sid = format!("proyecto-{sesion_id}");
         let mut herramientas: Vec<Value> = vec![];
         let mut uso = llm::Uso::default();
@@ -1289,6 +1422,9 @@ async fn generar_respuesta(st: AppState, sesion_id: String, mensaje_asistente_id
                 conversacion.push(json!({ "role": "user", "content": "Se alcanzó el presupuesto de tokens de esta sesión. No uses más herramientas: responde ahora con lo que tienes y di qué quedó sin hacer." }));
             }
             let sin_herr = ronda >= max_rondas || restante < 60_000 || reintento_length || tope;
+            if !es_dev && fase_sesion.is_some() && puede_escribir && ronda > 0 && ronda + 2 == max_rondas {
+                conversacion.push(json!({ "role": "user", "content": "Te quedan pocas rondas de herramientas: deja de investigar y, si la actividad pide un documento, llama ya a proponer_documento con el texto completo (lo que falte, como «Por confirmar»." }));
+            }
             if ronda > 0 && ronda == max_rondas && !herramientas.is_empty() {
                 conversacion.push(json!({ "role": "user", "content": "Ya no puedes usar más herramientas. Responde ahora con lo que tienes y di explícitamente qué no pudiste verificar." }));
             }
@@ -1753,7 +1889,7 @@ async fn sesion_actualizar(State(st): State<AppState>, o: Opcional, Path((id, si
         hay = true;
     }
     if let Some(a) = b.get("fuentesExcluidas").and_then(|v| v.as_array()) {
-        const CLAVES: [&str; 15] = ["ficha", "memoria", "resumen", "prd", "diseno", "backlog", "adjuntos", "plan_ejec", "lead", "historial", "previas", "riesgos", "hitos", "cronograma", "plan_trabajo"];
+        const CLAVES: [&str; 16] = ["ficha", "memoria", "resumen", "prd", "diseno", "backlog", "adjuntos", "documentos", "plan_ejec", "lead", "historial", "previas", "riesgos", "hitos", "cronograma", "plan_trabajo"];
         let fil: Vec<Value> = a.iter().filter(|x| x.as_str().map(|c| CLAVES.contains(&c) && c != "ficha").unwrap_or(false)).cloned().collect();
         up.set_expr("fuentesExcluidas", B::T(Value::Array(fil).to_string()), "{n}::jsonb");
         hay = true;

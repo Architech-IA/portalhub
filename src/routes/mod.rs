@@ -9,6 +9,8 @@ pub mod agentes;
 pub mod aichat;
 pub mod backlog;
 pub mod catalogos;
+pub mod demos_catalogo;
+pub mod infra_demos;
 pub mod central;
 pub mod council;
 pub mod dashboard;
@@ -48,6 +50,8 @@ pub fn router() -> Router<AppState> {
         .merge(hub::router())
         .merge(aichat::router())
         .merge(catalogos::router())
+        .merge(demos_catalogo::router())
+        .merge(infra_demos::router())
         .merge(prospecting::router())
         .merge(backlog::router())
         .merge(misc::router())

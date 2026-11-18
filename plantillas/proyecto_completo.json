@@ -3,6 +3,16 @@
   "nombre": "Proyecto completo (preventa y ejecución)",
   "descripcion": "Ciclo de vida de un proyecto desde que es un lead hasta la entrega: 6 fases de preventa (las etapas del lead) y 6 de ejecución. Cada fase define sus actividades, sus entregables y la puerta (criterios y aprobador) para pasar a la siguiente.",
   "version": 1,
+  "produce": {
+    "prd": "diagnostico",
+    "riesgos": "diagnostico",
+    "diseno": "demo",
+    "cronograma": "demo",
+    "hitos": "propuesta",
+    "plan_trabajo": "propuesta",
+    "plan_ejec": "arranque",
+    "backlog": "arranque"
+  },
   "fases": [
     {
       "clave": "identificacion",
@@ -23,6 +33,16 @@
           "entregable": "ficha_cliente"
         },
         {
+          "clave": "registrar_lead",
+          "titulo": "Registrar el lead en el módulo de leads y ligarlo al proyecto",
+          "tipo": "HUMANA",
+          "area": "Sales & Presales",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Todo proyecto comercial parte de un lead registrado. Si falta, registrarlo y ligarlo al proyecto.",
+          "entregable": "lead_registrado"
+        },
+        {
           "clave": "go_no_go",
           "titulo": "Decidir si se sigue con el lead y fijar el tope de esfuerzo de preventa",
           "tipo": "HUMANA",
@@ -34,9 +54,9 @@
         }
       ],
       "entregables": [
-        "Ficha del cliente",
-        "Decisión sigue / no sigue",
-        "Tope de esfuerzo de preventa"
+        "Ficha del cliente (datos esenciales)",
+        "Lead registrado en el módulo de leads",
+        "Decisión de seguir o no, con su tope de esfuerzo"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -78,15 +98,6 @@
       ],
       "requeridos": [
         {
-          "clave": "lead_registrado",
-          "titulo": "Lead registrado en el módulo de leads",
-          "ayuda": "Todo proyecto comercial parte de un lead registrado en el módulo de leads. Si falta, regístralo allí y ligalo al proyecto.",
-          "formato": "registro",
-          "verifica": {
-            "tipo": "lead_registrado"
-          }
-        },
-        {
           "clave": "ficha_cliente",
           "titulo": "Ficha del cliente (datos esenciales)",
           "ayuda": "Lo mínimo para decidir si el lead sigue: nombre comercial, contacto principal (nombre, cargo, correo y teléfono), qué quiere resolver, fuente y responsable. El resto se completa antes de la propuesta.",
@@ -94,6 +105,15 @@
           "verifica": {
             "tipo": "ficha_cliente",
             "nivel": "basica"
+          }
+        },
+        {
+          "clave": "lead_registrado",
+          "titulo": "Lead registrado en el módulo de leads",
+          "ayuda": "Todo proyecto comercial parte de un lead registrado en el módulo de leads. Si falta, regístralo allí y ligalo al proyecto.",
+          "formato": "registro",
+          "verifica": {
+            "tipo": "lead_registrado"
           }
         },
         {
@@ -122,7 +142,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Resumen del cliente, hipótesis de necesidad, mensaje de apertura y preguntas iniciales."
+          "descripcion": "Resumen del cliente, hipótesis de necesidad, mensaje de apertura y preguntas iniciales.",
+          "entregable": "briefing_contacto"
         },
         {
           "clave": "agendar_reunion",
@@ -136,7 +157,7 @@
         }
       ],
       "entregables": [
-        "Briefing de contacto",
+        "Briefing del primer contacto",
         "Reunión de diagnóstico agendada"
       ],
       "puerta": {
@@ -177,6 +198,15 @@
       ],
       "requeridos": [
         {
+          "clave": "briefing_contacto",
+          "titulo": "Briefing del primer contacto",
+          "formato": "nota",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "ayuda": "Resumen del cliente, hipótesis de necesidad, mensaje de apertura y preguntas iniciales, en las notas de la fase."
+        },
+        {
           "clave": "reunion_agendada",
           "titulo": "Reunión de diagnóstico agendada",
           "ayuda": "Registra la reunión como interacción del lead.",
@@ -202,7 +232,8 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Contexto del cliente, preguntas de descubrimiento y puntos a validar."
+          "descripcion": "Contexto del cliente, preguntas de descubrimiento y puntos a validar.",
+          "entregable": "briefing_reunion"
         },
         {
           "clave": "reunion_diagnostico",
@@ -211,7 +242,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Reunión con el cliente. Se registra en el Calendar para que el acta quede ligada al lead."
+          "descripcion": "Reunión con el cliente. Se registra en el Calendar para que el acta quede ligada al lead.",
+          "entregable": "reunion_diagnostico"
         },
         {
           "clave": "acta_requisitos",
@@ -222,12 +254,23 @@
           "prioridad": "HIGH",
           "descripcion": "A partir de la reunión: acta, dolor y objetivos del cliente, requisitos iniciales y compromisos adquiridos.",
           "entregable": "acta"
+        },
+        {
+          "clave": "requisitos",
+          "titulo": "Levantar los requisitos del proyecto en el PRD",
+          "tipo": "AGENTE",
+          "area": "Sales & Presales",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Pasar lo conversado en la reunión a requisitos concretos y verificables en el PRD del proyecto.",
+          "entregable": "requisitos"
         }
       ],
       "entregables": [
-        "Acta de la reunión",
-        "Dolor y objetivos del cliente",
-        "Requisitos iniciales"
+        "Briefing de la reunión de diagnóstico",
+        "Reunión de diagnóstico realizada",
+        "Acta del diagnóstico: dolor y objetivos del cliente",
+        "Requisitos iniciales en el PRD"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -270,6 +313,24 @@
       ],
       "requeridos": [
         {
+          "clave": "briefing_reunion",
+          "titulo": "Briefing de la reunión de diagnóstico",
+          "formato": "nota",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "ayuda": "Escribe la nota en las «Notas de la fase» del proyecto."
+        },
+        {
+          "clave": "reunion_diagnostico",
+          "titulo": "Reunión de diagnóstico realizada",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
           "clave": "acta",
           "titulo": "Acta del diagnóstico: dolor y objetivos del cliente",
           "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
@@ -306,7 +367,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Elegir lo más barato que logre avanzar la venta, dentro del tope de esfuerzo de preventa."
+          "descripcion": "Elegir lo más barato que logre avanzar la venta, dentro del tope de esfuerzo de preventa.",
+          "entregable": "definir_escalon"
         },
         {
           "clave": "esbozo_arquitectura",
@@ -325,7 +387,8 @@
           "area": "Development",
           "backlogType": "FEATURE",
           "prioridad": "HIGH",
-          "descripcion": "Si es un MVP: crear el repositorio de esta Solución, armar un PRD corto y un sprint \"MVP\" en el Backlog y ejecutarlo con el Motor. Construirlo para que se quede: es la base del proyecto si se gana la venta. Usar solo datos de ejemplo, nunca datos reales del cliente."
+          "descripcion": "Si es un MVP: crear el repositorio de esta Solución, armar un PRD corto y un sprint \"MVP\" en el Backlog y ejecutarlo con el Motor. Construirlo para que se quede: es la base del proyecto si se gana la venta. Usar solo datos de ejemplo, nunca datos reales del cliente.",
+          "entregable": "construir_demo"
         },
         {
           "clave": "registro_compromisos",
@@ -339,9 +402,10 @@
         }
       ],
       "entregables": [
-        "Demo o MVP funcionando y desplegado (si aplica)",
-        "Registro de lo mostrado y de los compromisos",
-        "Esbozo de arquitectura y modelo de datos del MVP"
+        "Escalón de demo definido",
+        "Esbozo de arquitectura del MVP",
+        "Demo construida",
+        "Registro de lo mostrado y de los compromisos"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -405,13 +469,13 @@
       ],
       "requeridos": [
         {
-          "clave": "registro_demo",
-          "titulo": "Registro de lo mostrado y de los compromisos",
-          "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
+          "clave": "definir_escalon",
+          "titulo": "Escalón de demo definido",
+          "formato": "nota",
           "verifica": {
             "tipo": "nota_lead"
           },
-          "formato": "nota"
+          "ayuda": "Escribe la nota en las «Notas de la fase» del proyecto."
         },
         {
           "clave": "esbozo_arquitectura",
@@ -422,6 +486,24 @@
             "min": 1
           },
           "formato": "diagrama"
+        },
+        {
+          "clave": "construir_demo",
+          "titulo": "Demo construida",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
+          "clave": "registro_demo",
+          "titulo": "Registro de lo mostrado y de los compromisos",
+          "ayuda": "Escribe las notas de la fase en el proyecto (sección «Notas de la fase»).",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "formato": "nota"
         }
       ]
     },
@@ -440,33 +522,34 @@
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Estimación por requisito, riesgos principales, supuestos y rango de costo, apoyada en el acta, los requisitos y la demo."
+          "descripcion": "Estimación por requisito, riesgos principales, supuestos y rango de costo, apoyada en el acta, los requisitos y la demo.",
+          "entregable": "estimacion"
+        },
+        {
+          "clave": "completar_ficha",
+          "titulo": "Completar la ficha del cliente para la propuesta",
+          "tipo": "AGENTE",
+          "area": "Sales & Presales",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Completar los datos de la ficha que faltan antes de emitir la propuesta: razón social, NIT, representante y contactos.",
+          "entregable": "ficha_cliente_completa"
         },
         {
           "clave": "borrador_propuesta",
-          "titulo": "Redactar el borrador de la propuesta",
+          "titulo": "Preparar, revisar y enviar la propuesta comercial",
           "tipo": "AGENTE",
           "area": "Sales & Presales",
           "backlogType": "DOCUMENTACION",
           "prioridad": "HIGH",
-          "descripcion": "Propuesta con alcance, entregables, cronograma, precio y condiciones. Queda como borrador en Propuestas, versionada.",
-          "entregable": "propuesta_enviada"
-        },
-        {
-          "clave": "revision_envio",
-          "titulo": "Revisar, ajustar y enviar la propuesta al cliente",
-          "tipo": "HUMANA",
-          "area": "Sales & Presales",
-          "backlogType": "TASK",
-          "prioridad": "HIGH",
-          "descripcion": "Los agentes redactan; una persona revisa y envía. Nada sale al cliente sin aprobación humana.",
+          "descripcion": "Redactar el borrador de la propuesta, revisarlo internamente y enviarlo al cliente desde el módulo de propuestas.",
           "entregable": "propuesta_enviada"
         }
       ],
       "entregables": [
-        "Estimación y riesgos",
-        "Propuesta versionada (alcance, precio, cronograma)",
-        "Propuesta enviada"
+        "Estimación de esfuerzo y costo",
+        "Ficha del cliente completa",
+        "Propuesta enviada al cliente"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -510,6 +593,15 @@
       ],
       "requeridos": [
         {
+          "clave": "estimacion",
+          "titulo": "Estimación de esfuerzo y costo",
+          "formato": "nota",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "ayuda": "Escribe la nota en las «Notas de la fase» del proyecto."
+        },
+        {
           "clave": "ficha_cliente_completa",
           "titulo": "Ficha del cliente completa",
           "ayuda": "Completa la ficha del cliente antes de proponer: razón social, NIT, sector, ciudad y país, quién decide la compra y valor estimado, además de los datos esenciales.",
@@ -549,7 +641,8 @@
           "area": "Sales & Presales",
           "backlogType": "TASK",
           "prioridad": "MEDIUM",
-          "descripcion": "Borradores de seguimiento y respuestas a objeciones. Los mensajes los envía una persona."
+          "descripcion": "Borradores de seguimiento y respuestas a objeciones. Los mensajes los envía una persona.",
+          "entregable": "seguimiento"
         },
         {
           "clave": "condiciones",
@@ -560,11 +653,22 @@
           "prioridad": "HIGH",
           "descripcion": "Condiciones finales (alcance, precio, plazos) y compromisos que pasarán al proyecto.",
           "entregable": "propuesta_aceptada"
+        },
+        {
+          "clave": "representante_legal",
+          "titulo": "Identificar al representante legal en la ficha del cliente",
+          "tipo": "HUMANA",
+          "area": "Sales & Presales",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Registrar en la ficha del cliente quién es el representante legal que firmará el contrato.",
+          "entregable": "representante_legal"
         }
       ],
       "entregables": [
-        "Propuesta final o contrato",
-        "Compromisos registrados"
+        "Seguimiento de la negociación registrado",
+        "Propuesta final aceptada o contrato",
+        "Representante legal del cliente identificado"
       ],
       "puerta": {
         "tipo": "RESULTADO",
@@ -605,6 +709,15 @@
         }
       ],
       "requeridos": [
+        {
+          "clave": "seguimiento",
+          "titulo": "Seguimiento de la negociación registrado",
+          "formato": "nota",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "ayuda": "Escribe la nota en las «Notas de la fase» del proyecto."
+        },
         {
           "clave": "propuesta_aceptada",
           "titulo": "Propuesta final aceptada o contrato",
@@ -654,7 +767,8 @@
           "area": "Client Delivery",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "El alcance base es la propuesta firmada; todo cambio posterior pasa por una solicitud de cambio."
+          "descripcion": "El alcance base es la propuesta firmada; todo cambio posterior pasa por una solicitud de cambio.",
+          "entregable": "alcance_base"
         },
         {
           "clave": "kickoff",
@@ -673,13 +787,15 @@
           "area": "Quality & Testing",
           "backlogType": "TEST_QA",
           "prioridad": "HIGH",
-          "descripcion": "Solo si hubo MVP en preventa: revisar estructura, pruebas y seguridad, y proponer qué endurecer antes de sumar funciones."
+          "descripcion": "Solo si hubo MVP en preventa: revisar estructura, pruebas y seguridad, y proponer qué endurecer antes de sumar funciones.",
+          "entregable": "revisar_mvp"
         }
       ],
       "entregables": [
-        "PRD completo (versión del proyecto)",
-        "Alcance base",
-        "Acta de arranque"
+        "PRD completo aprobado",
+        "Alcance base acordado",
+        "Acta de arranque",
+        "MVP revisado con el cliente"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -739,13 +855,31 @@
           "formato": "portal"
         },
         {
+          "clave": "alcance_base",
+          "titulo": "Alcance base acordado",
+          "formato": "nota",
+          "verifica": {
+            "tipo": "nota_lead"
+          },
+          "ayuda": "Escribe la nota en las «Notas de la fase» del proyecto."
+        },
+        {
           "clave": "acta_arranque",
           "titulo": "Acta de arranque",
-          "ayuda": "Marca el acta como lista y deja el enlace.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
+        },
+        {
+          "clave": "revisar_mvp",
+          "titulo": "MVP revisado con el cliente",
+          "formato": "enlace",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "pdf"
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -799,10 +933,10 @@
         }
       ],
       "entregables": [
-        "Diseño técnico",
-        "Descomposición del trabajo en partes entregables",
-        "Plan de ejecución",
-        "Backlog con épicas y sprints"
+        "Diseño técnico aprobado",
+        "Plan de ejecución aprobado",
+        "Descomposición del trabajo definida",
+        "Backlog con tareas creadas"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -888,15 +1022,6 @@
           "formato": "portal"
         },
         {
-          "clave": "descomposicion_definida",
-          "titulo": "Descomposición del trabajo definida",
-          "ayuda": "El Diseño técnico describe las partes entregables de la solución, sus dependencias, el orden de construcción y el primer incremento. Confírmalo con una nota.",
-          "verifica": {
-            "tipo": "manual"
-          },
-          "formato": "texto"
-        },
-        {
           "clave": "plan_aprobado",
           "titulo": "Plan de ejecución aprobado",
           "ayuda": "El plan de ejecución, aprobado en su artefacto.",
@@ -906,6 +1031,15 @@
             "aprobado": true
           },
           "formato": "portal"
+        },
+        {
+          "clave": "descomposicion_definida",
+          "titulo": "Descomposición del trabajo definida",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
         },
         {
           "clave": "backlog_creado",
@@ -934,7 +1068,8 @@
           "area": "Development",
           "backlogType": "IMPROVEMENT",
           "prioridad": "HIGH",
-          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto."
+          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto.",
+          "entregable": "sprint_endurecimiento"
         },
         {
           "clave": "sprints",
@@ -953,13 +1088,14 @@
           "area": "Development",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas. Actualizar también la descomposición del trabajo si cambió (partes, dependencias u orden)."
+          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas. Actualizar también la descomposición del trabajo si cambió (partes, dependencias u orden).",
+          "entregable": "actualizar_diseno"
         }
       ],
       "entregables": [
-        "Producto construido y revisado por sprint",
-        "Registro de solicitudes de cambio",
-        "Diseño técnico y diagrama al día con lo construido"
+        "Sprint de endurecimiento realizado",
+        "Producto construido: tareas hechas en el backlog",
+        "Diseño actualizado"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -1015,6 +1151,15 @@
       ],
       "requeridos": [
         {
+          "clave": "sprint_endurecimiento",
+          "titulo": "Sprint de endurecimiento realizado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
           "clave": "avance",
           "titulo": "Producto construido: tareas hechas en el backlog",
           "ayuda": "Al menos una tarea terminada y ninguna fallida.",
@@ -1025,6 +1170,15 @@
             "sin_fallidas": true
           },
           "formato": "backlog"
+        },
+        {
+          "clave": "actualizar_diseno",
+          "titulo": "Diseño actualizado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -1055,11 +1209,22 @@
           "prioridad": "HIGH",
           "descripcion": "El cliente prueba y acepta. Los hallazgos se corrigen antes de pasar a producción.",
           "entregable": "acta_aceptacion"
+        },
+        {
+          "clave": "identificar_firmante",
+          "titulo": "Identificar en la ficha quién firma la aceptación",
+          "tipo": "HUMANA",
+          "area": "Quality & Testing",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Registrar en la ficha del cliente a la persona que firma el acta de aceptación.",
+          "entregable": "firmante"
         }
       ],
       "entregables": [
         "Informe de pruebas",
-        "Acta de aceptación del cliente"
+        "Acta de aceptación del cliente",
+        "Quién firma por el cliente identificado"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -1105,20 +1270,20 @@
         {
           "clave": "informe_pruebas",
           "titulo": "Informe de pruebas",
-          "ayuda": "Marca el informe como listo y deja el enlace.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
           "verifica": {
-            "tipo": "manual"
+            "tipo": "documento_fase"
           },
-          "formato": "pdf"
+          "formato": "doc"
         },
         {
           "clave": "acta_aceptacion",
           "titulo": "Acta de aceptación del cliente",
-          "ayuda": "Marca el acta como lista y deja el enlace.",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "pdf_firmado"
+          "formato": "enlace"
         },
         {
           "clave": "firmante",
@@ -1147,7 +1312,8 @@
           "area": "Infrastructure & DevOps",
           "backlogType": "INFRAESTRUCTURA",
           "prioridad": "HIGH",
-          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios."
+          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios.",
+          "entregable": "entorno_produccion"
         },
         {
           "clave": "salida_produccion",
@@ -1161,8 +1327,8 @@
         }
       ],
       "entregables": [
-        "Producción funcionando",
-        "Monitoreo y plan de vuelta atrás"
+        "Entorno de producción preparado",
+        "Producción funcionando"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -1200,6 +1366,15 @@
         }
       ],
       "requeridos": [
+        {
+          "clave": "entorno_produccion",
+          "titulo": "Entorno de producción preparado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
         {
           "clave": "produccion",
           "titulo": "Producción funcionando",
@@ -1248,12 +1423,23 @@
           "prioridad": "MEDIUM",
           "descripcion": "Comparar lo estimado con lo real (tiempo y tokens) para mejorar las próximas propuestas.",
           "entregable": "lecciones"
+        },
+        {
+          "clave": "identificar_firmante",
+          "titulo": "Identificar en la ficha quién firma el cierre",
+          "tipo": "HUMANA",
+          "area": "Client Delivery",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Registrar en la ficha del cliente a la persona que firma el acta de cierre.",
+          "entregable": "firmante"
         }
       ],
       "entregables": [
         "Paquete de entrega",
         "Acta de cierre",
-        "Lecciones aprendidas"
+        "Lecciones aprendidas",
+        "Quién firma por el cliente identificado"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -1298,29 +1484,29 @@
         {
           "clave": "paquete_entrega",
           "titulo": "Paquete de entrega",
-          "ayuda": "Marca el paquete como entregado y deja el enlace.",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "zip"
+          "formato": "enlace"
         },
         {
           "clave": "acta_cierre",
           "titulo": "Acta de cierre",
-          "ayuda": "Marca el acta como lista y deja el enlace.",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "pdf_firmado"
+          "formato": "enlace"
         },
         {
           "clave": "lecciones",
           "titulo": "Lecciones aprendidas",
-          "ayuda": "Enlaza las lecciones aprendidas.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
           "verifica": {
-            "tipo": "manual"
+            "tipo": "documento_fase"
           },
-          "formato": "texto"
+          "formato": "doc"
         },
         {
           "clave": "firmante",

@@ -294,6 +294,12 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
                 (d["tiene"] == true, if d["tiene"] == true { "Tiene contenido".into() } else { "Sin contenido todavía".into() })
             }
         }
+        "documento_fase" => {
+            let d = &ctx["docs"][fase][clave];
+            let n = d["chars"].as_i64().unwrap_or(0);
+            let prop = if d["propuesta"] == true { " · la IA dejó una propuesta: ábrelo y revísala" } else { "" };
+            if n > 0 { (true, format!("Documento escrito en el portal ({n} caracteres, versión {}){prop}", d["version"].as_i64().unwrap_or(1))) } else { (false, format!("Documento sin escribir todavía{prop}")) }
+        }
         "arquitectura" => {
             artefacto = Some("arquitectura");
             let n = ctx["arquitecturaNodos"].as_i64().unwrap_or(0);
@@ -344,7 +350,7 @@ fn evaluar_requerido(r: &Value, lead_status: &str, ctx: &Value, fase: &str) -> V
         _ => (ok, detalle),
     };
     let m = &ctx["manuales"][fase][clave];
-    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "lead_registrado" | "ficha_cliente" | "ficha_contacto");
+    let es_manual = !matches!(tipo, "nota_lead" | "reunion_lead" | "documento" | "documento_fase" | "arquitectura" | "propuesta" | "tareas" | "despliegue" | "lead_registrado" | "ficha_cliente" | "ficha_contacto");
     json!({
         "clave": clave, "titulo": r["titulo"], "ayuda": r["ayuda"], "tipo": tipo, "formato": r["formato"].as_str().unwrap_or_else(|| super::plantillas::formato_automatico(tipo)), "ok": ok, "detalle": detalle, "manual": es_manual, "artefacto": artefacto,
         "evidencia": if es_manual { m["evidencia"].clone() } else { Value::Null }, "por": if es_manual { m["por"].clone() } else { Value::Null }, "en": if es_manual { m["en"].clone() } else { Value::Null },
@@ -427,7 +433,7 @@ fn vista_fases(def: &Value, fase_actual: &str, estado: &str, criterios: &Value, 
                                 "destino": destino_actividad(ctx["plantilla"].as_str().unwrap_or(""), clave, t),
                                 "assigneeName": fila.map(|x| x["assigneeName"].clone()).unwrap_or(Value::Null),
                                 "entregable": entregable_de_actividad(ctx["plantilla"].as_str().unwrap_or(""), clave, t)
-                                    .and_then(|e| req.iter().find(|r| r["clave"] == e.as_str()).map(|r| json!({ "clave": r["clave"], "titulo": r["titulo"], "ok": r["ok"] }))),
+                                    .and_then(|e| req.iter().find(|r| r["clave"] == e.as_str()).map(|r| json!({ "clave": r["clave"], "titulo": r["titulo"], "ok": r["ok"], "manual": r["manual"] }))),
                             })
                         })
                         .collect()
@@ -588,6 +594,17 @@ async fn contexto_recursos(st: &AppState, sol: &str, lead_id: Option<&str>) -> R
         let chars = crate::routes::aichat::texto_fase(n["content"].as_str().unwrap_or("")).trim().chars().count();
         ctx["notas"][n["fase"].as_str().unwrap_or_default()] = json!({ "chars": chars, "archivos": n["archivos"] });
     }
+    // Documentos que se escriben en el portal: cuánto texto tiene cada uno
+    let docs = fetch_json(
+        &st.pool,
+        r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('fase', "faseClave", 'clave', "entregableClave", 'chars', char_length(btrim(contenido)), 'version', version, 'propuesta', propuesta IS NOT NULL)), '[]'::jsonb) FROM "ProyectoDocumento" WHERE "solucionId" = $1"#,
+        &[B::T(sol.into())],
+    )
+    .await?;
+    ctx["docs"] = json!({});
+    for d in docs.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        ctx["docs"][d["fase"].as_str().unwrap_or_default()][d["clave"].as_str().unwrap_or_default()] = d.clone();
+    }
     if let Some(l) = lead_id {
         let filas = fetch_json(
             &st.pool,
@@ -719,6 +736,7 @@ fn destino_actividad(plantilla: &str, fase: &str, act: &Value) -> Option<String>
         "nota_lead" => Some("nota".into()),
         "ficha_cliente" => Some("ficha".into()),
         "documento" => r["verifica"]["clave"].as_str().map(String::from),
+        "documento_fase" => Some("documento".into()),
         _ => None,
     }
 }
@@ -790,16 +808,23 @@ async fn actividad(State(st): State<AppState>, se: Session, Path(id): Path<Strin
     let sql = if reabrir { r#"UPDATE "BacklogItem" SET status = 'BACKLOG', "updatedAt" = NOW() WHERE id = $1"# } else { r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW() WHERE id = $1"# };
     exec(&st.pool, sql, &[B::T(item)]).await?;
     let mut entregable_marcado = false;
+    let def = &est["definicion"];
+    let plantilla = est["plantilla"].as_str().unwrap_or_default();
+    let ent = indice(def, &fase)
+        .and_then(|i| lista(def)[i]["actividades"].as_array().and_then(|acts| acts.iter().find(|x| x["clave"] == clave.as_str()).cloned()))
+        .and_then(|act| entregable_de_actividad(plantilla, &fase, &act));
     if !reabrir {
         if let Some(ev) = s_no_vacio(&body, "evidencia").filter(|e| e.starts_with("http://") || e.starts_with("https://")) {
-            let def = &est["definicion"];
-            let plantilla = est["plantilla"].as_str().unwrap_or_default();
-            let ent = indice(def, &fase)
-                .and_then(|i| lista(def)[i]["actividades"].as_array().and_then(|acts| acts.iter().find(|x| x["clave"] == clave.as_str()).cloned()))
-                .and_then(|act| entregable_de_actividad(plantilla, &fase, &act));
             if let Some(e) = ent {
                 entregable_marcado = marcar_entregable(&st, &id, &fase, &e, &a.nombre, ev).await.is_ok();
             }
+        }
+    } else if let Some(e) = ent {
+        // La actividad y su entregable son lo mismo: al reabrir la actividad, un entregable manual que estaba marcado deja de estarlo
+        if est["faseActual"].as_str() == Some(fase.as_str()) && est["entregables"][fase.as_str()][e.as_str()]["ok"] == true {
+            let mut todos = est["entregables"].clone();
+            todos[fase.as_str()][e.as_str()] = json!({ "ok": false, "por": null, "en": null, "evidencia": est["entregables"][fase.as_str()][e.as_str()]["evidencia"] });
+            let _ = exec(&st.pool, r#"UPDATE "ProyectoFase" SET entregables = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id.clone()), B::J(todos)]).await;
         }
     }
     Ok(Json(json!({ "ok": true, "entregableMarcado": entregable_marcado })))
@@ -874,7 +899,22 @@ async fn crear_actividades(st: &AppState, sol: &str, def: &Value, idx: usize) {
         if let Err(e) = r {
             tracing::error!("tarea de fase: {e}");
             let _ = exec(&st.pool, r#"DELETE FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3"#, &[B::T(sol.into()), B::T(fase.into()), B::T(clave.into())]).await;
+        } else if act["entregable"] == "lead_registrado" {
+            let _ = exec(
+                &st.pool,
+                r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW() WHERE id = (SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3)
+                   AND EXISTS (SELECT 1 FROM "Solucion" WHERE id = $1 AND "leadId" IS NOT NULL)"#,
+                &[B::T(sol.into()), B::T(fase.into()), B::T(clave.into())],
+            )
+            .await;
         }
+    }
+}
+
+/// Crea las tareas que falten en la fase en la que va el proyecto (las actividades nuevas de la plantilla); las fases ya cerradas no se tocan.
+pub(super) async fn crear_actividades_de_fase_actual(st: &AppState, sol: &str, def: &Value, fase_actual: &str) {
+    if let Some(i) = indice(def, fase_actual) {
+        crear_actividades(st, sol, def, i).await;
     }
 }
 
@@ -1323,6 +1363,62 @@ pub(crate) async fn marcar_criterio(st: &AppState, id: &str, quien: &str, fase: 
 
 /// El estado del motor de fases en texto, para el contexto de las sesiones de IA: es la fuente de verdad de en qué fase está el proyecto
 /// (el Cronograma y otros artefactos pueden estar desactualizados).
+/// Dónde está una fase dentro del proceso. Regla única: una fase solo conoce lo producido hasta ella (ella incluida); lo de fases
+/// posteriores no existe todavía. La plantilla declara en `produce` en qué fase nace cada artefacto del hub (PRD, diseño, plan…).
+pub(crate) struct Posicion {
+    pub nombre: String,
+    pub numero: usize,
+    pub total: usize,
+    pub posteriores: Vec<String>,
+    idx: usize,
+    produce: Value,
+    def: Value,
+    /// Estados del lead (NEW, CONTACTED…) de las fases hasta esta, incluida.
+    lead: Vec<String>,
+    /// Estado del lead de la fase actual (vacío si no tiene).
+    pub lead_actual: String,
+}
+
+impl Posicion {
+    /// ¿La nota del lead de ese estado corresponde a esta fase o a una anterior? (RESULT cuenta solo después de la última fase con estado de lead).
+    pub fn nota_lead(&self, estado: &str) -> bool {
+        self.lead.iter().any(|e| e == estado)
+    }
+
+    /// ¿El artefacto ya existe en esta fase? Sin entrada en `produce` se considera de todas las fases.
+    pub fn disponible(&self, fuente: &str) -> bool {
+        match self.produce[fuente].as_str() {
+            Some(c) => indice(&self.def, c).map(|i| i <= self.idx).unwrap_or(true),
+            None => true,
+        }
+    }
+}
+
+/// `fase` = la de la sesión o documento; si no se da, la actual del proyecto.
+pub(crate) async fn posicion(st: &AppState, id: &str, fase: Option<&str>) -> Option<Posicion> {
+    let est = cargar(st, id).await.ok().flatten()?;
+    let def = est["definicion"].clone();
+    let clave = fase.map(String::from).or_else(|| est["faseActual"].as_str().map(String::from))?;
+    let idx = indice(&def, &clave)?;
+    let produce = if def["produce"].is_object() {
+        def["produce"].clone()
+    } else {
+        let crudo = if def["codigo"] == "INICIATIVA_INTERNA" { PLANTILLA_INTERNA_JSON } else { PLANTILLA_JSON };
+        serde_json::from_str::<Value>(crudo).ok().map(|p| p["produce"].clone()).unwrap_or(Value::Null)
+    };
+    let fases = lista(&def);
+    let posteriores = fases.iter().skip(idx + 1).filter_map(|f| f["clave"].as_str().map(String::from)).collect();
+    let mut lead: Vec<String> = fases.iter().take(idx + 1).filter_map(|f| f["leadStatus"].as_str().filter(|x| !x.is_empty()).map(String::from)).collect();
+    let ultima_con_lead = fases.iter().rposition(|f| f["leadStatus"].as_str().map(|x| !x.is_empty()).unwrap_or(false));
+    if ultima_con_lead.map(|u| idx > u).unwrap_or(false) {
+        lead.push("RESULT".into());
+    }
+    let nombre = fases[idx]["nombre"].as_str().unwrap_or("").to_string();
+    let lead_actual = fases[idx]["leadStatus"].as_str().unwrap_or("").to_string();
+    let total = fases.len();
+    Some(Posicion { nombre, numero: idx + 1, total, posteriores, idx, produce, def, lead, lead_actual })
+}
+
 pub(crate) async fn resumen_motor(st: &AppState, id: &str) -> Option<String> {
     let est = cargar(st, id).await.ok().flatten()?;
     let def = &est["definicion"];
@@ -1423,6 +1519,27 @@ pub(super) async fn marcar_entregable(st: &AppState, id: &str, fase: &str, clave
     todos[fase][clave] = json!({ "ok": true, "por": quien, "en": ahora(st).await, "evidencia": evidencia });
     exec(&st.pool, r#"UPDATE "ProyectoFase" SET entregables = $2, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(id.into()), B::J(todos)]).await?;
     Ok(())
+}
+
+/// Da por hecha la actividad que produce un entregable: un archivo subido o aceptado es el resultado de esa actividad.
+pub(super) async fn completar_actividad_de(st: &AppState, id: &str, fase: &str, clave: &str) {
+    let Ok(est) = cargar_iniciado(st, id).await else { return };
+    let def = &est["definicion"];
+    let plantilla = est["plantilla"].as_str().unwrap_or_default();
+    let Some(i) = indice(def, fase) else { return };
+    for act in lista(def)[i]["actividades"].as_array().cloned().unwrap_or_default() {
+        if entregable_de_actividad(plantilla, fase, &act).as_deref() != Some(clave) {
+            continue;
+        }
+        if let Some(k) = act["clave"].as_str() {
+            let _ = exec(
+                &st.pool,
+                r#"UPDATE "BacklogItem" SET status = 'DONE', "updatedAt" = NOW() WHERE id = (SELECT "backlogItemId" FROM "FaseActividad" WHERE "solucionId" = $1 AND fase = $2 AND clave = $3)"#,
+                &[B::T(id.into()), B::T(fase.into()), B::T(k.into())],
+            )
+            .await;
+        }
+    }
 }
 
 async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {
@@ -1551,6 +1668,23 @@ mod tests {
         assert_eq!(lista(&BASE).len(), 12);
         assert_eq!(lista(&BASE).iter().filter(|f| f["bloque"] == "PREVENTA").count(), 6);
         assert_eq!(indice(&BASE, FASE_ARRANQUE), Some(6));
+    }
+
+    /// Cada actividad produce un entregable y cada entregable lo produce una sola actividad (en las dos plantillas de fábrica).
+    #[test]
+    fn actividades_y_entregables_van_uno_a_uno() {
+        for plantilla in [&*BASE, &*INTERNA] {
+            for f in lista(plantilla) {
+                let acts = f["actividades"].as_array().unwrap();
+                let reqs: Vec<&str> = f["requeridos"].as_array().unwrap().iter().filter_map(|r| r["clave"].as_str()).collect();
+                let mut usados: Vec<&str> = acts.iter().map(|a| a["entregable"].as_str().unwrap_or_else(|| panic!("{}: la actividad {} no tiene entregable", f["clave"], a["clave"]))).collect();
+                usados.sort();
+                let mut esperados = reqs.clone();
+                esperados.sort();
+                assert_eq!(usados, esperados, "{}: actividades y entregables no coinciden uno a uno", f["clave"]);
+                assert!(esperados.windows(2).all(|w| w[0] != w[1]), "{}: entregable repetido", f["clave"]);
+            }
+        }
     }
 
     #[test]
@@ -1699,7 +1833,7 @@ mod tests {
         assert_eq!(v[0]["estado"], "HECHA");
         assert_eq!(v[2]["estado"], "ACTUAL");
         assert_eq!(v[3]["estado"], "PENDIENTE");
-        assert_eq!(v[2]["actividades"]["total"], 3);
+        assert_eq!(v[2]["actividades"]["total"], 4);
         assert_eq!(v[2]["actividades"]["hechas"], 1);
         assert_eq!(vista_fases(&BASE, "negociacion", "CERRADO_PERDIDO", &g, &[], &json!({}))[5]["estado"], "CERRADA");
         assert!(vista_fases(&BASE, "entrega_cierre", "COMPLETADO", &g, &[], &json!({})).iter().all(|f| f["estado"] == "HECHA"));
@@ -1723,7 +1857,7 @@ mod tests {
 
     #[test]
     fn cada_fase_exige_al_menos_un_entregable_valido_y_se_evalua() {
-        let tipos = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
+        let tipos = ["nota_lead", "reunion_lead", "documento", "documento_fase", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
         for cod in ["PROYECTO_COMPLETO", "INICIATIVA_INTERNA"] {
             for fase in lista(plantilla_por_codigo(cod)) {
                 let clave = fase["clave"].as_str().unwrap();
@@ -1744,9 +1878,10 @@ mod tests {
     fn los_entregables_automaticos_y_manuales_se_evaluan() {
         let ctx = json!({
             "plantilla": "PROYECTO_COMPLETO",
-            "notas": { "diagnostico": { "chars": 120 }, "demo": { "chars": 40 } }, "reuniones": 1, "arquitecturaNodos": 2,
+            "notas": { "diagnostico": { "chars": 120 }, "demo": { "chars": 40 }, "propuesta": { "chars": 60 }, "arranque": { "chars": 30 } }, "reuniones": 1, "arquitecturaNodos": 2,
             "prd": { "tiene": true, "estado": "APROBADO", "requisitos": 3 }, "propuestas": [ { "status": "SENT" } ],
-            "manuales": { "arranque": { "acta_arranque": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } } },
+            "docs": { "arranque": { "acta_arranque": { "chars": 100, "version": 1 } } },
+            "manuales": { "arranque": { "acta_arranque": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" }, "revisar_mvp": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } }, "diagnostico": { "reunion_diagnostico": { "ok": true, "por": "x", "en": "hoy", "evidencia": "enlace" } } },
             "ficha": { "ok": 11, "total": 11, "faltan": [], "okEsencial": 5, "totalEsencial": 5, "faltanEsenciales": [] },
         });
         let v = requeridos_vista(&ctx, "diagnostico", "DIAGNOSIS");

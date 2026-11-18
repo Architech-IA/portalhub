@@ -32,7 +32,7 @@ pub const COMERCIAL: &str = "PROYECTO_COMPLETO";
 pub const INTERNA: &str = "INICIATIVA_INTERNA";
 
 const APROBADORES: [&str; 7] = ["COMERCIAL", "LIDER_PREVENTA", "LIDER_TECNICO", "DIRECCION", "LIDER_PROYECTO", "CLIENTE", "DUENO"];
-const TIPOS_VERIFICACION: [&str; 11] = ["nota_lead", "reunion_lead", "documento", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
+const TIPOS_VERIFICACION: [&str; 12] = ["nota_lead", "reunion_lead", "documento", "documento_fase", "arquitectura", "propuesta", "tareas", "despliegue", "lead_registrado", "ficha_cliente", "ficha_contacto", "manual"];
 const ROLES_FICHA: [&str; 3] = ["DECISOR", "REPRESENTANTE_LEGAL", "FIRMANTE"];
 const TIPOS_SESION: [&str; 4] = ["KICKOFF", "PLANIFICACION", "REVISION", "LIBRE"];
 const ARTEFACTOS: [&str; 13] = ["prd", "diseno", "plan-ejec", "plan", "arquitectura", "diagramas", "cronograma", "riesgos", "cumplimiento", "cambios", "revision", "entrega", "codigo"];
@@ -41,7 +41,7 @@ const PRIORIDADES: [&str; 4] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const ESTADOS_PROPUESTA: [&str; 5] = ["DRAFT", "SENT", "UNDER_REVIEW", "ACCEPTED", "REJECTED"];
 const DOCUMENTOS: [&str; 3] = ["prd", "diseno", "plan"];
 /// Formatos que puede esperar un entregable que marca una persona. Los automáticos llevan el de su verificación.
-const FORMATOS_MANUALES: [&str; 6] = ["pdf", "pdf_firmado", "zip", "texto", "hoja", "enlace"];
+const FORMATOS_MANUALES: [&str; 10] = ["pdf", "pdf_firmado", "zip", "texto", "hoja", "md", "html", "txt", "csv", "enlace"];
 
 /// Formato de un entregable que se verifica solo.
 pub fn formato_automatico(tipo: &str) -> &'static str {
@@ -49,6 +49,7 @@ pub fn formato_automatico(tipo: &str) -> &'static str {
         "nota_lead" => "nota",
         "reunion_lead" | "lead_registrado" => "registro",
         "documento" => "portal",
+        "documento_fase" => "doc",
         "arquitectura" => "diagrama",
         "propuesta" => "propuesta",
         "tareas" => "backlog",
@@ -201,7 +202,7 @@ fn limpiar_verificacion(v: &Value, con_lead: bool, comercial: bool, donde: &str)
         return Err(format!("{donde}: tipo de verificación desconocido"));
     }
     match tipo {
-        "nota_lead" => Ok(json!({ "tipo": tipo })),
+        "nota_lead" | "documento_fase" => Ok(json!({ "tipo": tipo })),
         "reunion_lead" => {
             if !con_lead || !comercial {
                 return Err(format!("{donde}: «{tipo}» solo aplica a las fases de preventa del proyecto comercial"));
@@ -509,7 +510,7 @@ async fn sincronizar_tareas(st: &AppState, sol: &str, anterior: &Value, nuevo: &
 async fn propagar(st: &AppState, codigo: &str, nueva: &Value, actualizar_tareas: bool) -> Result<(usize, usize), ApiError> {
     let filas = fetch_json(
         &st.pool,
-        r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', "solucionId", 'def', definicion, 'criterios', criterios)), '[]'::jsonb) FROM "ProyectoFase" WHERE plantilla = $1"#,
+        r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', "solucionId", 'def', definicion, 'criterios', criterios, 'fase', "faseActual", 'estado', estado)), '[]'::jsonb) FROM "ProyectoFase" WHERE plantilla = $1"#,
         &[B::T(codigo.into())],
     )
     .await?;
@@ -521,7 +522,11 @@ async fn propagar(st: &AppState, codigo: &str, nueva: &Value, actualizar_tareas:
             if actualizar_tareas {
                 tareas += sincronizar_tareas(st, fila["id"].as_str().unwrap_or_default(), &anterior, &def).await;
             }
-            exec(&st.pool, r#"UPDATE "ProyectoFase" SET definicion = $2, criterios = $3, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(fila["id"].as_str().unwrap_or_default().into()), B::J(def), B::J(crit)]).await?;
+            exec(&st.pool, r#"UPDATE "ProyectoFase" SET definicion = $2, criterios = $3, "updatedAt" = NOW() WHERE "solucionId" = $1"#, &[B::T(fila["id"].as_str().unwrap_or_default().into()), B::J(def.clone()), B::J(crit)]).await?;
+            // Las actividades nuevas de la fase en curso se crean en el Backlog (las de fases ya cerradas, no)
+            if fila["estado"] == "EN_CURSO" {
+                super::fases::crear_actividades_de_fase_actual(st, fila["id"].as_str().unwrap_or_default(), &def, fila["fase"].as_str().unwrap_or_default()).await;
+            }
             n += 1;
         }
     }

@@ -1004,9 +1004,13 @@ async fn carga(st: &AppState, sid: &str, b: &Value) -> R<Value> {
 // ── Pruebas de flujo (varios pasos) en un navegador real ─────────────────────────────────────
 const SCRIPT_FLUJO: &str = "/root/pw/flujo-pagina.js";
 
-async fn flujo(sid: &str, b: &Value) -> R<Value> {
+async fn flujo(st: &AppState, sol: &str, sid: &str, b: &Value) -> R<Value> {
+    let objetivo = b["objetivo"].as_str().unwrap_or("app");
+    if !["app", "demo", "portal"].contains(&objetivo) {
+        return Err("El objetivo debe ser app, demo o portal.".into());
+    }
     let n = nombre_svc(sid, "app");
-    if !servicios_activos(sid).await.contains(&"app".to_string()) {
+    if objetivo == "app" && !servicios_activos(sid).await.contains(&"app".to_string()) {
         return Err("No hay una aplicación en marcha: inícala con dev_servicio (accion iniciar, tipo app).".into());
     }
     let mut pasos: Vec<Value> = vec![];
@@ -1035,15 +1039,45 @@ async fn flujo(sid: &str, b: &Value) -> R<Value> {
     if pasos.is_empty() {
         return Err("No hay pasos.".into());
     }
-    let (ip, puerto) = (ip_de(&n).await, puerto_de_app(&n).await.unwrap_or(3000));
+    // Destino: la app de la sesión, la demo desplegada de esta Solución (puerto local) o el portal con la sesión del usuario agente-qa.
+    let mut cookies = String::new();
+    let base = match objetivo {
+        "demo" => {
+            let f = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('puerto', "deployPort", 'estado', "deployStatus") FROM "Solucion" WHERE id = $1"#, &[B::T(sol.into())]).await.map_err(|e| e.to_string())?;
+            let f = f.ok_or("No encontré la Solución.")?;
+            match (f["puerto"].as_i64(), f["estado"].as_str()) {
+                (Some(p), Some("LIVE")) => format!("http://127.0.0.1:{p}"),
+                _ => return Err("Esta Solución no tiene una demo desplegada en marcha (deployStatus LIVE). Se despliega con proponer_despliegue.".into()),
+            }
+        }
+        "portal" => {
+            let url = std::env::var("NEXTAUTH_URL").unwrap_or_else(|_| "https://portal.architechia.co".into()).trim_end_matches('/').to_string();
+            if !url.starts_with("https://") {
+                return Err("El portal no tiene una URL pública configurada.".into());
+            }
+            let u = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('id', id, 'name', name, 'email', email, 'role', role, 'avatar', avatar) FROM "User" WHERE email = 'agente-qa@architechia.co'"#, &[]).await.map_err(|e| e.to_string())?;
+            let u = u.ok_or("No existe el usuario agente-qa: un administrador debe crearlo.")?;
+            let claims = json!({ "name": u["name"], "email": u["email"], "sub": u["id"], "id": u["id"], "role": u["role"], "avatar": u["avatar"], "googleConnected": false, "microsoftConnected": false });
+            let jwe = crate::session::cifrar_token(&claims, &st.cfg.nextauth_secret, 1800).ok_or("No se pudo firmar la sesión de prueba.")?;
+            let host = url.trim_start_matches("https://").to_string();
+            cookies = json!([{ "name": "__Secure-next-auth.session-token", "value": jwe, "domain": host, "path": "/", "secure": true, "httpOnly": true, "sameSite": "Lax" }]).to_string();
+            url
+        }
+        _ => {
+            let (ip, puerto) = (ip_de(&n).await, puerto_de_app(&n).await.unwrap_or(3000));
+            format!("http://{ip}:{puerto}")
+        }
+    };
     let dir = dir_capturas(sid);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let _c = Candado::tomar(sid)?;
     let _p = cupo().await?;
     let prefijo = format!("{}-flujo", ahora_s());
-    let base = format!("http://{ip}:{puerto}");
     let mut cmd = tokio::process::Command::new(node_bin());
     cmd.args([SCRIPT_FLUJO, base.as_str(), &*dir.to_string_lossy(), prefijo.as_str()]).env("FLUJO", Value::Array(pasos).to_string()).kill_on_drop(true);
+    if objetivo == "portal" {
+        cmd.env("COOKIES", &cookies).env("SOLO_LECTURA", "1");
+    }
     let out = match tokio::time::timeout(Duration::from_secs(240), cmd.output()).await {
         Err(_) => return Ok(json!({ "texto": "El flujo tardó más de 4 minutos y se detuvo." })),
         Ok(Err(e)) => return Err(e.to_string()),
@@ -1611,7 +1645,7 @@ pub async fn manejar(st: &AppState, accion: &str, b: &Value) -> R<Value> {
         "chequeo" => chequeo(&ws, &sol, &sid).await,
         "servicio" => servicio(st, &sol, &ws, &sid, b).await,
         "carga" => carga(st, &sid, b).await,
-        "flujo" => flujo(&sid, b).await,
+        "flujo" => flujo(st, &sol, &sid, b).await,
         "traer_sprint" => traer_sprint(&raiz, &ws, b).await,
         "integrar" => integrar(&raiz, &rama, b).await,
         "listar" => listar(&ws, b),

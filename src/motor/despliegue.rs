@@ -29,6 +29,13 @@ fn dockerfile_generico() -> PathBuf {
     Path::new(DEPLOYS).join("_Dockerfile.generic-nextjs")
 }
 
+/// Un repo puede traer su propio `Dockerfile.portal` (p. ej. un backend en Rust); si no, se usa la plantilla genérica de Next.js.
+/// Es opt-in por nombre: un `Dockerfile` cualquiera del repo NO cambia cómo se despliegan las demos que ya existen.
+fn dockerfile_de(repo: &Path) -> PathBuf {
+    let propio = repo.join("Dockerfile.portal");
+    if propio.is_file() { propio } else { dockerfile_generico() }
+}
+
 // ── Variables de entorno por proyecto ────────────────────────────────────────────────────────
 fn ruta_env(nombre: &str) -> PathBuf {
     let _ = std::fs::create_dir_all(ENV_DIR);
@@ -204,11 +211,20 @@ const NGINX_PLANTILLA: &str = r#"server {
 server {
     listen 443 ssl;
     server_name @HOST@;
+    access_log /var/log/nginx/demo-@SLUG@.access.log;
 
     ssl_certificate /etc/letsencrypt/live/@DOMINIO@/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/@DOMINIO@/privkey.pem;
 
     client_max_body_size 20M;
+
+    error_page 502 503 504 = /__despertar;
+    location = /__despertar {
+        internal;
+        proxy_pass http://127.0.0.1:3100/api/publico/despertar/@SLUG@;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header User-Agent $http_user_agent;
+    }
 
     location / {
         proxy_pass http://localhost:@PUERTO@;
@@ -229,7 +245,7 @@ server {
 "#;
 
 fn nginx_https(slug: &str, puerto: i64) -> String {
-    NGINX_PLANTILLA.replace("@HOST@", &format!("{slug}.{DOMINIO}")).replace("@DOMINIO@", DOMINIO).replace("@PUERTO@", &puerto.to_string())
+    NGINX_PLANTILLA.replace("@HOST@", &format!("{slug}.{DOMINIO}")).replace("@DOMINIO@", DOMINIO).replace("@PUERTO@", &puerto.to_string()).replace("@SLUG@", slug)
 }
 
 async fn esperar_contenedor(contenedor: &str, puerto: i64, intentos: u32) -> R<()> {
@@ -257,7 +273,7 @@ async fn levantar(st: &AppState, sol: &Value, solucion_id: &str, nombre: &str, s
         let nuevo = format!("demo-{slug}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
         let puerto = puerto_libre(st).await?;
         // El puerto se publica SOLO en localhost: Nginx es quien atiende a internet (con HTTPS). Antes quedaba en 0.0.0.0 y la app respondía por HTTP plano.
-        let mut args: Vec<String> = ["run", "-d", "--name", &nuevo, "-p", &format!("127.0.0.1:{puerto}:3000"), "--restart", "unless-stopped"].iter().map(|s| s.to_string()).collect();
+        let mut args: Vec<String> = ["run", "-d", "--name", &nuevo, "-p", &format!("127.0.0.1:{puerto}:3000"), "--restart", "unless-stopped", "--memory", "512m", "--memory-swap", "512m"].iter().map(|s| s.to_string()).collect();
         if let Some(red) = sol["dbNetworkName"].as_str().filter(|x| !x.is_empty()) {
             args.extend(["--network".into(), red.to_string()]);
         }
@@ -473,7 +489,7 @@ pub async fn desplegar_pruebas(st: &AppState, solucion_id: &str, rama: &str, bas
         asegurar_dockerfile()?;
         asegurar_carpeta_prisma(&dir);
         let imagen = format!("demo-image-{slug}");
-        sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &imagen, &dir.to_string_lossy()], None, 600).await?;
+        sh("docker", &["build", "-f", &dockerfile_de(&dir).to_string_lossy(), "-t", &imagen, &dir.to_string_lossy()], None, 600).await?;
         let vars = super::dev::archivo_variables(solucion_id);
         let red = format!("demo-net-{slug}");
         let (url_db, nueva) = crear_base_pruebas(&slug, base == "conservar").await?;
@@ -588,7 +604,7 @@ pub async fn desplegar(st: &AppState, solucion_id: &str) -> R<Value> {
         let slug = slug_deploy(&nombre);
         let imagen = format!("demo-image-{slug}");
         // Se construye con una etiqueta aparte: la versión que está en producción sigue intacta hasta que la nueva responda.
-        sh("docker", &["build", "-f", &dockerfile_generico().to_string_lossy(), "-t", &format!("{imagen}:nueva"), &repo.to_string_lossy()], None, 600).await?;
+        sh("docker", &["build", "-f", &dockerfile_de(&repo).to_string_lossy(), "-t", &format!("{imagen}:nueva"), &repo.to_string_lossy()], None, 600).await?;
         let r = levantar(st, &sol, solucion_id, &nombre, &slug, &format!("{imagen}:nueva"), &viejo).await?;
         // Recién ahora la versión que estaba pasa a ser la «anterior» (a la que se puede volver) y la nueva, la vigente.
         let _ = sh("docker", &["tag", &format!("{imagen}:latest"), &format!("{imagen}:anterior")], None, 60).await;
@@ -657,7 +673,7 @@ pub async fn aprovisionar_base(st: &AppState, solucion_id: &str) -> R<Value> {
             "docker",
             &[
                 "run", "-d", "--name", &contenedor, "--network", &red, "-e", &format!("POSTGRES_PASSWORD={clave}"), "-e", &format!("POSTGRES_DB={db}"), "-e", &format!("POSTGRES_USER={usuario}"), "-v",
-                &format!("{volumen}:/var/lib/postgresql/data"), "--restart", "unless-stopped", "postgres:16-alpine",
+                &format!("{volumen}:/var/lib/postgresql/data"), "--restart", "unless-stopped", "--memory", "256m", "--memory-swap", "256m", "postgres:16-alpine",
             ],
             None,
             300,

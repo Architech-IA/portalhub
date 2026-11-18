@@ -11,6 +11,7 @@ pub mod dev;
 pub mod diseno;
 pub mod ejecutor;
 pub mod grafo;
+pub mod infra;
 pub mod lead;
 pub mod repo;
 
@@ -34,6 +35,9 @@ pub fn router(st: AppState) -> Router<AppState> {
     Router::new()
         .route("/health", get(|| async { Json(json!({ "status": "ok", "service": "portalhub-motor" })) }))
         .route("/api/dev/{accion}", post(dev_accion))
+        .route("/api/infra/estado", post(infra_estado))
+        .route("/api/infra/accion", post(infra_accion))
+        .route("/api/infra/topes", post(infra_topes))
         .route("/api/executor/dispatch", post(dispatch))
         .route("/api/executor/dispatch-chain", post(dispatch_chain))
         .route("/api/executor/complete", post(complete))
@@ -51,6 +55,27 @@ pub fn router(st: AppState) -> Router<AppState> {
         .route("/api/proposals/{id}/documents", post(documento_crear))
         .route("/internal/crear-repositorio", post(crear_repositorio))
         .route_layer(middleware::from_fn_with_state(st, exigir_clave))
+}
+
+async fn infra_estado(State(st): State<AppState>) -> Response {
+    match infra::estado(&st).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
+    }
+}
+
+async fn infra_topes(State(st): State<AppState>) -> Response {
+    match infra::topes_todas(&st).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
+    }
+}
+
+async fn infra_accion(State(st): State<AppState>, Json(b): Json<Value>) -> Response {
+    match infra::accion(&st, b["solucionId"].as_str().unwrap_or(""), b["accion"].as_str().unwrap_or(""), &b).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
+    }
 }
 
 /// Toda ruta del motor (salvo /health) exige la clave interna.

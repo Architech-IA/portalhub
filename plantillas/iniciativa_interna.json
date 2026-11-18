@@ -8,6 +8,16 @@
   "nombre": "Iniciativa interna (producto o mejora propia)",
   "descripcion": "Ciclo de vida de una iniciativa de ArchitechIA: idea y caso de negocio (con aprobación de Dirección y capacidad asignada), validación con un MVP, construcción, QA con el dueño, lanzamiento y medición del beneficio. No hay cliente ni venta.",
   "version": 1,
+  "produce": {
+    "prd": "idea",
+    "riesgos": "caso_negocio",
+    "hitos": "caso_negocio",
+    "diseno": "validacion",
+    "cronograma": "validacion",
+    "plan_trabajo": "diseno_plan",
+    "plan_ejec": "diseno_plan",
+    "backlog": "diseno_plan"
+  },
   "fases": [
     {
       "clave": "idea",
@@ -34,12 +44,13 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Una persona responde por el resultado; los usuarios son quienes validan que sirve."
+          "descripcion": "Una persona responde por el resultado; los usuarios son quienes validan que sirve.",
+          "entregable": "dueno_usuarios"
         }
       ],
       "entregables": [
-        "Planteamiento del problema",
-        "Dueño y usuarios"
+        "Problema y resultado esperado en el PRD",
+        "Dueño y usuarios definidos"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -88,6 +99,15 @@
             "clave": "prd"
           },
           "formato": "portal"
+        },
+        {
+          "clave": "dueno_usuarios",
+          "titulo": "Dueño y usuarios definidos",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -116,7 +136,8 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Ahorro, ingreso o riesgo evitado, en números, y cómo se va a medir después del lanzamiento."
+          "descripcion": "Ahorro, ingreso o riesgo evitado, en números, y cómo se va a medir después del lanzamiento.",
+          "entregable": "beneficio"
         },
         {
           "clave": "priorizacion",
@@ -125,13 +146,14 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "La capacidad de agentes y personas es compartida con los proyectos de clientes: se decide cuánta se le da y desde cuándo."
+          "descripcion": "La capacidad de agentes y personas es compartida con los proyectos de clientes: se decide cuánta se le da y desde cuándo.",
+          "entregable": "priorizacion"
         }
       ],
       "entregables": [
-        "Caso de negocio con beneficio y costo",
-        "Métrica de éxito",
-        "Prioridad y capacidad asignada"
+        "Caso de negocio y prioridad",
+        "Beneficio esperado definido",
+        "Prioridad definida"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -175,11 +197,29 @@
         {
           "clave": "caso_negocio",
           "titulo": "Caso de negocio y prioridad",
-          "ayuda": "Marca el caso de negocio como listo y deja el enlace.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
+        },
+        {
+          "clave": "beneficio",
+          "titulo": "Beneficio esperado definido",
+          "formato": "enlace",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "texto"
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
+          "clave": "priorizacion",
+          "titulo": "Prioridad definida",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -218,13 +258,14 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Qué funcionó, qué no, y si la métrica de éxito parece alcanzable."
+          "descripcion": "Qué funcionó, qué no, y si la métrica de éxito parece alcanzable.",
+          "entregable": "validar_usuarios"
         }
       ],
       "entregables": [
-        "Esbozo de arquitectura y modelo de datos",
-        "MVP funcionando",
-        "Conclusiones de la validación"
+        "Esbozo de arquitectura del MVP",
+        "Alcance del MVP en el PRD",
+        "MVP validado con usuarios"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -282,6 +323,16 @@
       ],
       "requeridos": [
         {
+          "clave": "esbozo_arquitectura",
+          "titulo": "Esbozo de arquitectura del MVP",
+          "ayuda": "Al menos un componente en el diagrama de arquitectura.",
+          "verifica": {
+            "tipo": "arquitectura",
+            "min": 1
+          },
+          "formato": "diagrama"
+        },
+        {
           "clave": "mvp_definido",
           "titulo": "Alcance del MVP en el PRD",
           "ayuda": "Al menos un requisito en el PRD.",
@@ -293,14 +344,13 @@
           "formato": "portal"
         },
         {
-          "clave": "esbozo_arquitectura",
-          "titulo": "Esbozo de arquitectura del MVP",
-          "ayuda": "Al menos un componente en el diagrama de arquitectura.",
+          "clave": "validar_usuarios",
+          "titulo": "MVP validado con usuarios",
+          "formato": "enlace",
           "verifica": {
-            "tipo": "arquitectura",
-            "min": 1
+            "tipo": "manual"
           },
-          "formato": "diagrama"
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -354,10 +404,10 @@
         }
       ],
       "entregables": [
-        "Diseño técnico",
-        "Descomposición del trabajo en partes entregables",
-        "Plan de ejecución",
-        "Backlog con épicas y sprints"
+        "Diseño técnico aprobado",
+        "Plan de ejecución aprobado",
+        "Descomposición del trabajo definida",
+        "Backlog con tareas creadas"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -441,15 +491,6 @@
           "formato": "portal"
         },
         {
-          "clave": "descomposicion_definida",
-          "titulo": "Descomposición del trabajo definida",
-          "ayuda": "El Diseño técnico describe las partes entregables de la solución, sus dependencias, el orden de construcción y el primer incremento. Confírmalo con una nota.",
-          "verifica": {
-            "tipo": "manual"
-          },
-          "formato": "texto"
-        },
-        {
           "clave": "plan_aprobado",
           "titulo": "Plan de ejecución aprobado",
           "ayuda": "El plan de ejecución, aprobado en su artefacto.",
@@ -459,6 +500,15 @@
             "aprobado": true
           },
           "formato": "portal"
+        },
+        {
+          "clave": "descomposicion_definida",
+          "titulo": "Descomposición del trabajo definida",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
         },
         {
           "clave": "backlog_creado",
@@ -487,7 +537,8 @@
           "area": "Development",
           "backlogType": "IMPROVEMENT",
           "prioridad": "HIGH",
-          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto."
+          "descripcion": "Solo si hubo MVP en preventa: dejar el MVP listo para ser la base del proyecto.",
+          "entregable": "sprint_endurecimiento"
         },
         {
           "clave": "sprints",
@@ -506,13 +557,14 @@
           "area": "Development",
           "backlogType": "DOCUMENTACION",
           "prioridad": "MEDIUM",
-          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas. Actualizar también la descomposición del trabajo si cambió (partes, dependencias u orden)."
+          "descripcion": "Comparar el esquema de Prisma y la estructura del código con el Diseño técnico y el diagrama; actualizar el hub con las diferencias. Revisar también los «CAMBIO DE DISEÑO» declarados por los agentes en la traza de las tareas. Actualizar también la descomposición del trabajo si cambió (partes, dependencias u orden).",
+          "entregable": "actualizar_diseno"
         }
       ],
       "entregables": [
-        "Producto construido y revisado por sprint",
-        "Registro de solicitudes de cambio",
-        "Diseño técnico y diagrama al día con lo construido"
+        "Sprint de endurecimiento realizado",
+        "Producto construido: tareas hechas en el backlog",
+        "Diseño actualizado"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -566,6 +618,15 @@
       ],
       "requeridos": [
         {
+          "clave": "sprint_endurecimiento",
+          "titulo": "Sprint de endurecimiento realizado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
           "clave": "avance",
           "titulo": "Producto construido: tareas hechas en el backlog",
           "ayuda": "Al menos una tarea terminada y ninguna fallida.",
@@ -576,6 +637,15 @@
             "sin_fallidas": true
           },
           "formato": "backlog"
+        },
+        {
+          "clave": "actualizar_diseno",
+          "titulo": "Diseño actualizado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -604,12 +674,13 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "El dueño y los usuarios prueban y aceptan. Los hallazgos se corrigen antes del lanzamiento."
+          "descripcion": "El dueño y los usuarios prueban y aceptan. Los hallazgos se corrigen antes del lanzamiento.",
+          "entregable": "uat"
         }
       ],
       "entregables": [
         "Informe de pruebas",
-        "Aceptación del dueño"
+        "Aceptación de usuarios (UAT)"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -653,11 +724,20 @@
         {
           "clave": "informe_pruebas",
           "titulo": "Informe de pruebas",
-          "ayuda": "Marca el informe como listo y deja el enlace.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
+        },
+        {
+          "clave": "uat",
+          "titulo": "Aceptación de usuarios (UAT)",
+          "formato": "enlace",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "pdf"
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -676,7 +756,8 @@
           "area": "Infrastructure & DevOps",
           "backlogType": "INFRAESTRUCTURA",
           "prioridad": "HIGH",
-          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios."
+          "descripcion": "Entorno separado de la demo, base de datos de producción, variables y secretos propios.",
+          "entregable": "entorno_produccion"
         },
         {
           "clave": "salida_produccion",
@@ -695,13 +776,14 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "MEDIUM",
-          "descripcion": "Anuncio, guía corta y una sesión de preguntas para quienes la van a usar."
+          "descripcion": "Anuncio, guía corta y una sesión de preguntas para quienes la van a usar.",
+          "entregable": "comunicacion_usuarios"
         }
       ],
       "entregables": [
-        "Producción funcionando",
-        "Monitoreo y plan de vuelta atrás",
-        "Usuarios avisados y capacitados"
+        "Entorno de producción preparado",
+        "Lanzamiento en producción",
+        "Usuarios informados del lanzamiento"
       ],
       "puerta": {
         "tipo": "NORMAL",
@@ -743,6 +825,15 @@
       ],
       "requeridos": [
         {
+          "clave": "entorno_produccion",
+          "titulo": "Entorno de producción preparado",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
           "clave": "produccion",
           "titulo": "Lanzamiento en producción",
           "ayuda": "El proyecto debe tener su URL de despliegue registrada.",
@@ -750,6 +841,15 @@
             "tipo": "despliegue"
           },
           "formato": "url"
+        },
+        {
+          "clave": "comunicacion_usuarios",
+          "titulo": "Usuarios informados del lanzamiento",
+          "formato": "enlace",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
         }
       ]
     },
@@ -768,7 +868,8 @@
           "area": "Operations",
           "backlogType": "TASK",
           "prioridad": "HIGH",
-          "descripcion": "Quién la mantiene, cómo se pide soporte y cuándo se hacen respaldos."
+          "descripcion": "Quién la mantiene, cómo se pide soporte y cuándo se hacen respaldos.",
+          "entregable": "traspaso_operacion"
         },
         {
           "clave": "medir_exito",
@@ -792,8 +893,8 @@
         }
       ],
       "entregables": [
-        "Traspaso a operación",
-        "Medición contra el beneficio esperado",
+        "Traspaso a operación realizado",
+        "Resultado medido contra lo esperado",
         "Lecciones aprendidas"
       ],
       "puerta": {
@@ -836,22 +937,31 @@
       ],
       "requeridos": [
         {
-          "clave": "medicion",
-          "titulo": "Resultado medido contra lo esperado",
-          "ayuda": "Enlaza la medición.",
+          "clave": "traspaso_operacion",
+          "titulo": "Traspaso a operación realizado",
+          "formato": "enlace",
           "verifica": {
             "tipo": "manual"
           },
-          "formato": "hoja"
+          "ayuda": "Márcalo como listo con una evidencia (enlace o nota) cuando la actividad esté hecha."
+        },
+        {
+          "clave": "medicion",
+          "titulo": "Resultado medido contra lo esperado",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
         },
         {
           "clave": "lecciones",
           "titulo": "Lecciones aprendidas",
-          "ayuda": "Enlaza las lecciones aprendidas.",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
           "verifica": {
-            "tipo": "manual"
+            "tipo": "documento_fase"
           },
-          "formato": "texto"
+          "formato": "doc"
         }
       ]
     }

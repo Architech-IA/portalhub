@@ -14,7 +14,7 @@ mod util;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use axum::{extract::DefaultBodyLimit, extract::State, routing::get, Json, Router};
+use axum::{extract::DefaultBodyLimit, extract::Request, extract::State, http::{Method, StatusCode}, middleware::Next, response::{IntoResponse, Response}, routing::get, Json, Router};
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::Connection;
@@ -25,6 +25,24 @@ use crate::{config::Config, state::AppState};
 async fn health(State(st): State<AppState>) -> Json<Value> {
     let db = sqlx::query("SELECT 1").fetch_one(&st.pool).await.is_ok();
     Json(json!({ "status": if db { "ok" } else { "degraded" }, "db": db, "service": "portalhub" }))
+}
+
+
+/// Rol REVISOR: solo lectura. Rechaza con 403 cualquier petición que no sea GET/HEAD/OPTIONS hecha con una sesión de ese rol
+/// (salvo /api/auth/, para poder cerrar sesión). Se aplica a TODA la API: lo que Rust sirve y lo que reenvía a Next.
+async fn revisor_solo_lectura(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    let metodo = req.method().clone();
+    let es_lectura = metodo == Method::GET || metodo == Method::HEAD || metodo == Method::OPTIONS;
+    if !es_lectura && !req.uri().path().starts_with("/api/auth/") {
+        let cookies = req.headers().get("cookie").and_then(|h| h.to_str().ok()).unwrap_or("");
+        let rol = session::token_de_cabecera(cookies)
+            .and_then(|t| session::descifrar_token(&t, &st.cfg.nextauth_secret))
+            .and_then(|c| c.get("role").and_then(|r| r.as_str()).map(String::from));
+        if rol.as_deref() == Some("REVISOR") {
+            return (StatusCode::FORBIDDEN, Json(json!({ "error": "El rol Revisor es de solo lectura." }))).into_response();
+        }
+    }
+    next.run(req).await
 }
 
 #[tokio::main]
@@ -109,8 +127,10 @@ async fn main() {
     routes::tipos::iniciar_refresco(state.clone());
     if !modo_motor {
         routes::seguimiento::iniciar(state.clone());
+        routes::demos_catalogo::iniciar(state.clone());
     } else {
         motor::dev::iniciar_limpieza();
+        motor::infra::iniciar_automatico(state.clone());
     }
 
     let app = if modo_motor {
@@ -121,6 +141,8 @@ async fn main() {
             .merge(routes::router())
             // Lo que Rust aún no implementa se reenvía a Next (ver proxy.rs).
             .fallback(proxy::a_next)
+            // Rol REVISOR: solo lectura (ver revisor_solo_lectura).
+            .layer(axum::middleware::from_fn_with_state(state.clone(), revisor_solo_lectura))
             // Los archivos del hub de leads viajan en base64 dentro del JSON.
             .layer(DefaultBodyLimit::max(40 * 1024 * 1024))
             .with_state(state)
