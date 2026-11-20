@@ -28,6 +28,10 @@ pub(crate) async fn generar(st: &AppState, sol: &str, fase: &str, fase_nombre: &
     if let Err(e) = r {
         tracing::warn!("paquete de cierre de {fase} en {sol}: {e}");
     }
+    // El estado vivo de la memoria refleja la fase que acaba de cerrarse.
+    if let Err(e) = crate::routes::estado_vivo::actualizar(st, sol, &format!("cierre de la fase {fase_nombre}")).await {
+        tracing::warn!("estado vivo de {sol}: {e}");
+    }
 }
 
 async fn construir(st: &AppState, sol: &str, fase: &str, fase_nombre: &str, criterios: &[Value], quien: &str) -> String {

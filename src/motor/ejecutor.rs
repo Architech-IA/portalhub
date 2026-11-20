@@ -111,7 +111,7 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         &st.pool,
         r#"SELECT jsonb_build_object(
              'taskId', bi.id, 'taskTitle', bi.title, 'taskDescription', bi.description, 'priority', bi.priority, 'taskStatus', bi.status, 'taskCode', bi."taskCode",
-             'dependsOnTaskId', bi."dependsOnTaskId", 'areaId', bi."areaId", 'areaName', a.name,
+             'dependsOnTaskId', bi."dependsOnTaskId", 'prdRequisitoId', bi."prdRequisitoId", 'areaId', bi."areaId", 'areaName', a.name,
              'sprintId', s.id, 'sprintName', s.name, 'sprintGoal', s.goal, 'sprintCode', s."sprintCode",
              'epicId', e.id, 'epicName', e.name, 'epicDescription', e.description,
              'solId', sol.id, 'solNombre', sol.nombre, 'solDescripcion', sol.descripcion, 'solucionCode', sol."solucionCode", 'solucionDirecta', bi."solucionId")
@@ -263,6 +263,14 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
     if let Some(b) = crate::routes::biblioteca::bloque_para_tarea(st, so(&t, "solId").as_deref(), &sg(&t, "taskTitle"), &so(&t, "taskDescription").unwrap_or_default(), &sg(&t, "areaName")).await {
         variable.push(String::new());
         variable.push(b);
+    }
+
+    // Pruebas de aceptación aprobadas del requisito que construye esta tarea (MASD-0026-0004).
+    if let (Some(sid), Some(rid)) = (so(&t, "solId").or_else(|| so(&t, "solucionDirecta")), so(&t, "prdRequisitoId")) {
+        if let Some(b) = crate::routes::pruebas_aceptacion::bloque_para_requisito(st, &sid, &rid).await {
+            variable.push(String::new());
+            variable.push(b);
+        }
     }
 
     if let Some(dep_id) = so(&t, "dependsOnTaskId") {
@@ -824,7 +832,10 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                 checklist.insert(0, json!({ "criterion": "El código escrito compila (tsc --noEmit)", "passed": true, "reason": "Verificado con el compilador real" }));
             }
             // Revisión de seguridad con reglas fijas sobre los archivos que escribió la tarea (sesión y rol, secretos, ejecución dinámica).
-            let hallazgos = super::seguridad::revisar_tarea(&raiz_chequeo, &archivos).await;
+            let mut hallazgos = super::seguridad::revisar_tarea(&raiz_chequeo, &archivos).await;
+            if cambios.contains("package-lock.json") || cambios.contains("package.json") {
+                hallazgos.extend(super::seguridad::auditar_dependencias(&raiz_chequeo).await);
+            }
             if !hallazgos.is_empty() {
                 let graves = hallazgos.iter().filter(|h| h.gravedad == "ALTA").count();
                 let advertir = super::seguridad::solo_advertir();
@@ -855,6 +866,11 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
         .await;
     }
     exec(&st.pool, r#"UPDATE "TaskExecution" SET artifacts=$2::jsonb WHERE id=$1"#, &[B::T(exec_id.into()), B::T(artefactos.to_string())]).await.map_err(err_db)?;
+    if let Some(sid) = so(&t, "solucionId") {
+        if let Err(e) = crate::routes::estado_vivo::actualizar(st, &sid, "tarea terminada").await {
+            tracing::warn!("estado vivo de {sid}: {e}");
+        }
+    }
 
     let mut resultado_final = c.resumen.clone();
     if let (true, Some(codigo_sprint), Some(wt), Some(cod)) = (uso_worktree, so(&t, "sprintCode").filter(|x| !x.is_empty()), wt_tarea.as_ref(), codigo.as_deref()) {

@@ -136,6 +136,28 @@ async fn instancia(st: &AppState, id: &str, sol: &Value, t: &Value) -> Result<Va
             let existe = n.as_i64().unwrap_or(0) > 0;
             Ok(json!({ "soporte": true, "existe": existe, "estado": if existe { "VIGENTE" } else { "SIN_CONTENIDO" }, "version": Value::Null }))
         }
+        "fuentes" => {
+            let tipos = serde_json::to_string(&fuente["tiposFuente"]).unwrap_or_else(|_| "[]".into());
+            let r = fetch_json(
+                &st.pool,
+                r#"SELECT jsonb_build_object('n', COUNT(*), 'actualizado', MAX("updatedAt")) FROM "FuenteProyecto" WHERE "solucionId" = $1 AND tipo IN (SELECT jsonb_array_elements_text($2::text::jsonb))"#,
+                &[B::T(id.into()), B::T(tipos)],
+            )
+            .await?;
+            let existe = r["n"].as_i64().unwrap_or(0) > 0;
+            Ok(json!({ "soporte": true, "existe": existe, "estado": if existe { "VIGENTE" } else { "SIN_CONTENIDO" }, "version": Value::Null, "actualizado": r["actualizado"], "cantidad": r["n"] }))
+        }
+        "pruebas_aceptacion" => {
+            let r = fetch_json(
+                &st.pool,
+                r#"SELECT jsonb_build_object('aprobadas', COUNT(*) FILTER (WHERE estado = 'APROBADA'), 'propuestas', COUNT(*) FILTER (WHERE estado = 'PROPUESTA'), 'actualizado', MAX("updatedAt")) FROM "PruebaAceptacion" WHERE "solucionId" = $1"#,
+                &[B::T(id.into())],
+            )
+            .await?;
+            let (ap, pr) = (r["aprobadas"].as_i64().unwrap_or(0), r["propuestas"].as_i64().unwrap_or(0));
+            let estado = if ap > 0 { "VIGENTE" } else if pr > 0 { "EN_REVISION" } else { "SIN_CONTENIDO" };
+            Ok(json!({ "soporte": true, "existe": ap + pr > 0, "estado": estado, "version": Value::Null, "actualizado": r["actualizado"], "cantidad": ap }))
+        }
         "prd_requisitos" => {
             let prd = parse_o_texto(sol["prd"].as_str().unwrap_or(""));
             let n = prd["requisitos"].as_array().map(|a| a.len()).unwrap_or(0);

@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use super::repo::{self, R};
 use crate::{
     state::AppState,
-    util::{fetch_json_opt, B},
+    util::{fetch_json, fetch_json_opt, B},
 };
 
 const IDENT: [&str; 4] = ["-c", "user.email=masd@architechia.local", "-c", "user.name=Motor Agéntico SDD"];
@@ -133,7 +133,7 @@ fn cabecera(doc: &Value) -> String {
 }
 
 /// Archivos de la spec: (ruta relativa, contenido).
-pub(crate) fn construir_archivos(sol: &Value) -> Vec<(String, String)> {
+pub(crate) fn construir_archivos(sol: &Value, pruebas: &[Value]) -> Vec<(String, String)> {
     let nombre = sol["name"].as_str().or_else(|| sol["nombre"].as_str()).or_else(|| sol["title"].as_str()).unwrap_or("Proyecto");
     let mut f: Vec<(String, String)> = vec![];
     let mut indice = String::new();
@@ -164,7 +164,17 @@ pub(crate) fn construir_archivos(sol: &Value) -> Vec<(String, String)> {
             if let Some(id) = r["id"].as_str() {
                 m.push_str(&format!("`prdRequisitoId: {id}`\n\n"));
             }
-            m.push_str("> Criterio de aceptación y prueba asociada: completar al derivar las pruebas (MASD-0026-0004).\n\n");
+            let aprobadas: Vec<&Value> = pruebas.iter().filter(|p| p["reqCodigo"] == n.as_str()).collect();
+            if aprobadas.is_empty() {
+                m.push_str("> Pruebas de aceptación: todavía no hay ninguna aprobada para este requisito (se derivan y se aprueban en el hub).\n\n");
+            } else {
+                m.push_str(&format!("> Pruebas de aceptación: [{n}](../pruebas/{n}.md). Cada prueba automática debe llevar «{n}» en su nombre.\n\n"));
+                let mut p = format!("# Pruebas de aceptación · {n}\n\n> Aprobadas por una persona en el hub. Cada prueba automática que las implemente debe llevar «{n}» en su nombre.\n\n");
+                for a in &aprobadas {
+                    p.push_str(&format!("## {}\n\n{}\n\n", a["titulo"].as_str().unwrap_or(""), a["escenarios"].as_str().unwrap_or("")));
+                }
+                f.push((format!("spec/pruebas/{n}.md"), p));
+            }
             cuerpo(r, 2, &mut m);
             f.push((format!("spec/requisitos/{n}.md"), m));
             reqs.push_str(&format!("- [{n}](requisitos/{n}.md) · {}\n", titulo.lines().next().unwrap_or("")));
@@ -230,7 +240,8 @@ pub async fn exportar(st: &AppState, solucion_id: &str) -> R<Value> {
     if raiz == PathBuf::from(repo::ruta_portal()) {
         return Err("Esta Solución no tiene repositorio propio: la spec solo se exporta a repositorios de proyecto, nunca al del portal.".into());
     }
-    let archivos = construir_archivos(&sol);
+    let pruebas = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('reqCodigo', "reqCodigo", 'titulo', titulo, 'escenarios', escenarios) ORDER BY "reqCodigo", "createdAt"), '[]'::jsonb) FROM "PruebaAceptacion" WHERE "solucionId" = $1 AND estado = 'APROBADA'"#, &[B::T(solucion_id.into())]).await.map_err(|e| e.to_string())?;
+    let archivos = construir_archivos(&sol, pruebas.as_array().map(|a| a.as_slice()).unwrap_or(&[]));
     if archivos.len() <= 1 {
         return Err("La Solución todavía no tiene PRD ni diseño con contenido para exportar.".into());
     }
@@ -280,7 +291,7 @@ mod tests {
             { "id": "r1", "texto": "Registrar interesados", "prioridad": "MUST" },
             { "id": "r2", "texto": "Mapa público", "prioridad": "SHOULD" } ] });
         let sol = json!({ "name": "CRM", "prd": prd.to_string(), "disenoTecnico": "" });
-        let f = construir_archivos(&sol);
+        let f = construir_archivos(&sol, &[]);
         let rutas: Vec<&str> = f.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(rutas, vec!["spec/README.md", "spec/prd.md", "spec/requisitos/REQ-001.md", "spec/requisitos/REQ-002.md", "spec/herramientas/trazabilidad.mjs"]);
         assert!(f[1].1.contains("vinculante"));
@@ -289,7 +300,21 @@ mod tests {
 
     #[test]
     fn solo_readme_si_no_hay_contenido() {
-        let f = construir_archivos(&json!({ "name": "X", "prd": "", "disenoTecnico": "" }));
+        let f = construir_archivos(&json!({ "name": "X", "prd": "", "disenoTecnico": "" }), &[]);
         assert_eq!(f.len(), 1);
+    }
+
+    #[test]
+    fn exporta_las_pruebas_aprobadas_por_requisito() {
+        let prd = json!({ "requisitos": [{ "id": "r1", "texto": "Registrar interesados" }, { "id": "r2", "texto": "Mapa público" }] });
+        let sol = json!({ "name": "CRM", "prd": prd.to_string() });
+        let pruebas = vec![json!({ "reqCodigo": "REQ-002", "titulo": "Sin datos privados", "escenarios": "- **Dado** x\n  **Cuando** y\n  **Entonces** z" })];
+        let f = construir_archivos(&sol, &pruebas);
+        let rutas: Vec<&str> = f.iter().map(|(r, _)| r.as_str()).collect();
+        assert!(rutas.contains(&"spec/pruebas/REQ-002.md") && !rutas.contains(&"spec/pruebas/REQ-001.md"));
+        let r2 = f.iter().find(|(r, _)| r == "spec/requisitos/REQ-002.md").unwrap();
+        assert!(r2.1.contains("../pruebas/REQ-002.md"));
+        let r1 = f.iter().find(|(r, _)| r == "spec/requisitos/REQ-001.md").unwrap();
+        assert!(r1.1.contains("todavía no hay ninguna aprobada"));
     }
 }

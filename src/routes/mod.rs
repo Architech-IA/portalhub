@@ -6,6 +6,9 @@ pub mod administracion;
 pub mod artefactos;
 pub mod catalogo_artefactos;
 pub mod metricas;
+pub mod estado_vivo;
+pub mod pruebas_aceptacion;
+pub mod fuentes;
 pub mod biblioteca;
 pub mod paquete_cierre;
 pub mod auth;
@@ -74,6 +77,9 @@ pub fn router() -> Router<AppState> {
         .merge(artefactos::router())
         .merge(catalogo_artefactos::router())
         .merge(metricas::router())
+        .merge(estado_vivo::router())
+        .merge(pruebas_aceptacion::router())
+        .merge(fuentes::router())
         .merge(biblioteca::router())
         .merge(ejecutor::router())
         .merge(fases::router())

@@ -36,6 +36,13 @@ static HTML_PELIGROSO: LazyLock<Regex> = LazyLock::new(|| re(r"dangerouslySetInn
 static CORS_ABIERTO: LazyLock<Regex> = LazyLock::new(|| re(r#"(?i)(Access-Control-Allow-Origin['"]?\s*[:,]\s*['"]\*['"]|origin\s*:\s*['"]\*['"])"#));
 static TLS_APAGADO: LazyLock<Regex> = LazyLock::new(|| re(r#"rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0"#));
 
+static VERIFICA_CLAVE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"(?i)((bcrypt|bcryptjs|argon2|scrypt)\w*\.(compare|verify|compareSync|checkSync)\b|\b(verifyPassword|checkPassword|comparePassword|compararContrase\w*|verificarContrase\w*)\b)")
+});
+static LIMITA_INTENTOS: LazyLock<Regex> = LazyLock::new(|| {
+    re(r"(?i)(rate.?limit|ratelimit|limiter|throttle|intentos|attempts|lockout|bloqueo|too many|\b429\b|failedLogin|loginAttempts|maxTries|bloquear)")
+});
+
 fn es_codigo(ruta: &str) -> bool {
     let sin_prueba = !(ruta.contains("node_modules") || ruta.contains(".next/") || ruta.contains(".test.") || ruta.contains(".spec.") || ruta.contains("/tests/") || ruta.contains("/__tests__/") || ruta.starts_with("tests/"));
     sin_prueba && [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].iter().any(|e| ruta.ends_with(e))
@@ -54,6 +61,9 @@ pub fn revisar_archivo(ruta: &str, contenido: &str) -> Vec<Hallazgo> {
     }
     if ACCION_SERVIDOR.is_match(contenido) && ESCRIBE_BD.is_match(contenido) && !MARCA_AUTH.is_match(contenido) {
         poner("ALTA", "rol-en-accion", "La acción de servidor escribe en la base y no comprueba sesión ni rol. Una acción de servidor se puede invocar directamente: valida quién la llama y su rol dentro de la propia acción.".into());
+    }
+    if VERIFICA_CLAVE.is_match(contenido) && !LIMITA_INTENTOS.is_match(contenido) {
+        poner("ALTA", "login-sin-limite", "El código verifica contraseñas y no limita los intentos fallidos. Limita por cuenta y por IP (por ejemplo 5 intentos cada 15 minutos) y bloquea temporalmente, en el servidor.".into());
     }
     for (n, linea) in contenido.lines().enumerate() {
         let l = linea.trim();
@@ -99,6 +109,35 @@ pub async fn revisar_tarea(raiz: &Path, archivos: &[String]) -> Vec<Hallazgo> {
     out
 }
 
+/// Hallazgos de dependencias a partir de la salida JSON de `npm audit --json` (pura, con pruebas).
+pub fn hallazgos_de_audit(salida: &str) -> Vec<Hallazgo> {
+    let Ok(j) = serde_json::from_str::<serde_json::Value>(salida) else { return vec![] };
+    let v = &j["metadata"]["vulnerabilities"];
+    let (criticas, altas) = (v["critical"].as_i64().unwrap_or(0), v["high"].as_i64().unwrap_or(0));
+    if criticas == 0 && altas == 0 {
+        return vec![];
+    }
+    let mut nombres: Vec<String> = j["vulnerabilities"]
+        .as_object()
+        .map(|o| o.iter().filter(|(_, x)| matches!(x["severity"].as_str(), Some("critical") | Some("high"))).map(|(k, x)| format!("{k} ({})", x["severity"].as_str().unwrap_or(""))).collect())
+        .unwrap_or_default();
+    nombres.sort();
+    nombres.truncate(6);
+    let detalle = format!("npm audit encontró {criticas} vulnerabilidad(es) crítica(s) y {altas} alta(s) en dependencias de producción: {}. Actualiza a una versión corregida (npm audit fix o subir la versión) y vuelve a probar.", nombres.join(", "));
+    vec![Hallazgo { gravedad: if criticas > 0 { "ALTA" } else { "MEDIA" }, regla: "dependencias-vulnerables", archivo: "package-lock.json".into(), detalle }]
+}
+
+/// Ejecuta `npm audit` en el proyecto (solo si trae package-lock.json). Si no hay red o falla, no bloquea: devuelve vacío.
+pub async fn auditar_dependencias(raiz: &Path) -> Vec<Hallazgo> {
+    if !raiz.join("package-lock.json").exists() {
+        return vec![];
+    }
+    match super::repo::sh_salida("npm", &["audit", "--json", "--omit=dev"], Some(raiz), 120).await {
+        Ok((_, salida, _)) => hallazgos_de_audit(&salida),
+        Err(_) => vec![],
+    }
+}
+
 /// `true` si las graves solo deben avisar (`MOTOR_SEGURIDAD=advertir`).
 pub fn solo_advertir() -> bool {
     std::env::var("MOTOR_SEGURIDAD").map(|v| v.eq_ignore_ascii_case("advertir")).unwrap_or(false)
@@ -142,6 +181,27 @@ mod tests {
         assert!(h.iter().any(|x| x.regla == "secreto-en-codigo"));
         assert!(h.iter().any(|x| x.regla == "ejecucion-dinamica"));
         assert_eq!(h.iter().filter(|x| x.regla == "secreto-en-codigo").count(), 1);
+    }
+
+    #[test]
+    fn login_que_compara_clave_sin_limite_de_intentos_es_grave() {
+        let sin = "import bcrypt from 'bcryptjs'\nexport async function autenticar(email: string, password: string) {\n  const u = await buscar(email)\n  return bcrypt.compare(password, u.hash)\n}\n";
+        assert!(revisar_archivo("lib/auth.ts", sin).iter().any(|x| x.regla == "login-sin-limite" && x.gravedad == "ALTA"));
+        let con = "import bcrypt from 'bcryptjs'\nimport { rateLimit } from './limite'\nexport async function autenticar(email: string, password: string) {\n  await rateLimit(email)\n  return bcrypt.compare(password, (await buscar(email)).hash)\n}\n";
+        assert!(!revisar_archivo("lib/auth.ts", con).iter().any(|x| x.regla == "login-sin-limite"));
+    }
+
+    #[test]
+    fn audit_de_npm_critica_es_grave_y_alta_es_aviso() {
+        let critica = r#"{"metadata":{"vulnerabilities":{"critical":1,"high":2,"total":3}},"vulnerabilities":{"next":{"severity":"critical"},"semver":{"severity":"high"},"x":{"severity":"low"}}}"#;
+        let h = hallazgos_de_audit(critica);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].gravedad, "ALTA");
+        assert!(h[0].detalle.contains("next (critical)") && !h[0].detalle.contains("x (low)"));
+        let alta = r#"{"metadata":{"vulnerabilities":{"critical":0,"high":1}},"vulnerabilities":{"semver":{"severity":"high"}}}"#;
+        assert_eq!(hallazgos_de_audit(alta)[0].gravedad, "MEDIA");
+        assert!(hallazgos_de_audit(r#"{"metadata":{"vulnerabilities":{"critical":0,"high":0}}}"#).is_empty());
+        assert!(hallazgos_de_audit("no es json").is_empty());
     }
 
     #[test]
