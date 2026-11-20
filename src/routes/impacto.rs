@@ -124,13 +124,18 @@ async fn impacto(State(st): State<AppState>, sesion: Session, Path((id, clave)):
     }
     let n_t = tareas.as_array().map(|a| a.len()).unwrap_or(0);
     let n_p = pruebas.as_array().map(|a| a.len()).unwrap_or(0);
+    let resumen = if clave == "prd" || clave == "requisitos" {
+        format!("{} artefacto(s) dependen de este; {} requisito(s) cambiaron entre las dos últimas versiones del PRD, con {n_t} tarea(s) y {n_p} prueba(s) de aceptación a revisar.", deps.len(), cambiados.len())
+    } else {
+        format!("{} artefacto(s) dependen de este: si cambia, hay que revisarlos.", deps.len())
+    };
     Ok(Json(json!({
         "clave": clave,
         "dependientes": deps,
         "requisitosCambiados": cambiados.iter().map(|c| json!({ "id": c.0, "texto": c.1, "motivo": c.2 })).collect::<Vec<_>>(),
         "tareas": tareas,
         "pruebas": pruebas,
-        "resumen": format!("{} artefacto(s) dependen de este; {} requisito(s) cambiaron entre las dos últimas versiones del PRD, con {n_t} tarea(s) y {n_p} prueba(s) de aceptación a revisar.", deps.len(), cambiados.len()),
+        "resumen": resumen,
     })))
 }
 
