@@ -5,6 +5,8 @@ use crate::state::AppState;
 pub mod administracion;
 pub mod artefactos;
 pub mod catalogo_artefactos;
+pub mod metricas;
+pub mod biblioteca;
 pub mod paquete_cierre;
 pub mod auth;
 pub mod agentes;
@@ -71,6 +73,8 @@ pub fn router() -> Router<AppState> {
         .merge(solucion_hub::router())
         .merge(artefactos::router())
         .merge(catalogo_artefactos::router())
+        .merge(metricas::router())
+        .merge(biblioteca::router())
         .merge(ejecutor::router())
         .merge(fases::router())
         .merge(plantillas::router())

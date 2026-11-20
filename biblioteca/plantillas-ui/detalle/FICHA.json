@@ -1,0 +1,10 @@
+{
+  "descripcion": "Vista de detalle de un registro: cabecera con estado y acciones, datos agrupados y línea de actividad.",
+  "cuandoUsar": "Ver un cliente, lote, tarea o proyecto en su propia página o panel lateral.",
+  "palabrasClave": ["detalle", "ficha", "vista de", "perfil", "registro", "panel lateral", "página de", "pagina de"],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Plantilla propia de ArchiTechIA (Next.js + Tailwind)."
+}

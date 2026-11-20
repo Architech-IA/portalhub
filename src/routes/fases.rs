@@ -1666,7 +1666,7 @@ mod tests {
     #[test]
     fn la_plantilla_base_es_coherente() {
         validar_plantilla(&BASE).expect("plantilla base");
-        assert_eq!(lista(&BASE).len(), 12);
+        assert_eq!(lista(&BASE).len(), 14);
         assert_eq!(lista(&BASE).iter().filter(|f| f["bloque"] == "PREVENTA").count(), 6);
         assert_eq!(indice(&BASE, FASE_ARRANQUE), Some(6));
     }
@@ -1830,7 +1830,7 @@ mod tests {
         let g = criterios_vacios(&BASE);
         let acts = vec![json!({ "fase": "diagnostico", "clave": "acta_requisitos", "backlogItemId": "x", "taskCode": null, "status": "DONE", "assigneeName": null })];
         let v = vista_fases(&BASE, "diagnostico", "EN_CURSO", &g, &acts, &json!({}));
-        assert_eq!(v.len(), 12);
+        assert_eq!(v.len(), 14);
         assert_eq!(v[0]["estado"], "HECHA");
         assert_eq!(v[2]["estado"], "ACTUAL");
         assert_eq!(v[3]["estado"], "PENDIENTE");

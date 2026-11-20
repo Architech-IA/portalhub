@@ -1,0 +1,10 @@
+{
+  "descripcion": "Formulario con etiquetas visibles, validación al salir del campo, errores junto al campo y envío con progreso.",
+  "cuandoUsar": "Crear o editar un registro: cliente, lote, usuario, solicitud.",
+  "palabrasClave": ["formulario", "campos", "crear", "editar", "registro", "validación", "validacion", "captura"],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Plantilla propia de ArchiTechIA (Next.js + Tailwind)."
+}

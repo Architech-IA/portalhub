@@ -1,7 +1,7 @@
 {
   "codigo": "PROYECTO_COMPLETO",
   "nombre": "Proyecto completo (preventa y ejecución)",
-  "descripcion": "Ciclo de vida de un proyecto desde que es un lead hasta la entrega: 6 fases de preventa (las etapas del lead) y 6 de ejecución. Cada fase define sus actividades, sus entregables y la puerta (criterios y aprobador) para pasar a la siguiente.",
+  "descripcion": "Ciclo de vida de un proyecto desde que es un lead hasta su operación: 6 fases de preventa (las etapas del lead), 6 de ejecución y 2 de postventa (estabilización, y operación y evolución). Cada fase define sus actividades, sus entregables y la puerta (criterios y aprobador) para pasar a la siguiente.",
   "version": 1,
   "produce": {
     "prd": "diagnostico",
@@ -1517,6 +1517,272 @@
             "tipo": "ficha_contacto",
             "rol": "FIRMANTE"
           }
+        }
+      ]
+    },
+    {
+      "clave": "estabilizacion",
+      "numero": 13,
+      "bloque": "EJECUCION",
+      "nombre": "Postventa · Estabilización",
+      "leadStatus": null,
+      "objetivo": "Acompañar la salida a producción (hipercuidado): monitorear, corregir defectos contra la spec y confirmar que el sistema es estable.",
+      "actividades": [
+        {
+          "clave": "plan_hipercuidado",
+          "titulo": "Definir el periodo de hipercuidado, el monitoreo y los criterios de salida",
+          "tipo": "AGENTE",
+          "area": "Client Delivery",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "HIGH",
+          "descripcion": "Duración acordada, qué se monitorea, canal y tiempos de respuesta, y cuándo se considera estable el sistema.",
+          "entregable": "plan_hipercuidado"
+        },
+        {
+          "clave": "monitoreo",
+          "titulo": "Activar el monitoreo y el canal de soporte acordado",
+          "tipo": "HUMANA",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Alertas, acceso a logs y el canal por el que el cliente reporta incidentes.",
+          "entregable": "monitoreo_activo"
+        },
+        {
+          "clave": "corregir_defectos",
+          "titulo": "Corregir los defectos reportados contra la spec, cada uno con su prueba",
+          "tipo": "AGENTE",
+          "area": "Development",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Cada defecto se registra como requisito o prueba nueva y se corrige con el ciclo corto: spec, prueba, construcción.",
+          "entregable": "defectos_corregidos"
+        },
+        {
+          "clave": "informe_estabilizacion",
+          "titulo": "Redactar el informe de estabilización",
+          "tipo": "AGENTE",
+          "area": "Client Delivery",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Incidentes del periodo, correcciones, indicadores y criterios de salida cumplidos.",
+          "entregable": "informe_estabilizacion"
+        }
+      ],
+      "entregables": [
+        "Plan de hipercuidado",
+        "Monitoreo y canal de soporte activos",
+        "Defectos corregidos con su prueba",
+        "Informe de estabilización"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "CLIENTE",
+        "criterios": [
+          "El periodo de hipercuidado acordado terminó sin incidentes críticos abiertos",
+          "Cada defecto corregido tiene su prueba",
+          "El cliente recibió el informe de estabilización"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_CODIGO",
+          "etiqueta": "Repositorio y despliegue",
+          "descripcion": "Correcciones del periodo de hipercuidado."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Informe de estabilización",
+          "descripcion": "Súbelo como adjunto del proyecto si no lo escribes en el portal."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "estabilizacion",
+          "titulo": "Seguimiento del hipercuidado",
+          "tipo": "REVISION",
+          "objetivo": "Revisar incidentes y defectos del periodo y decidir si el sistema ya es estable.",
+          "artefactos": [
+            "entrega",
+            "prd"
+          ],
+          "resultado": "Informe de estabilización y lista de defectos cerrados.",
+          "cierre": [
+            "Todos los incidentes del periodo están cerrados o planificados",
+            "Cada defecto corregido tiene su prueba",
+            "El informe de estabilización está listo"
+          ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "plan_hipercuidado",
+          "titulo": "Plan de hipercuidado",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
+        },
+        {
+          "clave": "monitoreo_activo",
+          "titulo": "Monitoreo y canal de soporte activos",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
+        },
+        {
+          "clave": "defectos_corregidos",
+          "titulo": "Defectos corregidos con su prueba",
+          "ayuda": "Marca el entregable como listo y deja el enlace al registro de defectos y sus pruebas.",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
+        },
+        {
+          "clave": "informe_estabilizacion",
+          "titulo": "Informe de estabilización",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
+        }
+      ]
+    },
+    {
+      "clave": "operacion_evolucion",
+      "numero": 14,
+      "bloque": "EJECUCION",
+      "nombre": "Postventa · Operación y evolución",
+      "leadStatus": null,
+      "objetivo": "Operar con soporte, convertir incidentes y pedidos de cambio en requisitos y devolver lo aprendido a las plantillas de preventa.",
+      "actividades": [
+        {
+          "clave": "traspaso_soporte",
+          "titulo": "Traspasar el soporte y acordar los tiempos de respuesta (SLA)",
+          "tipo": "HUMANA",
+          "area": "Client Delivery",
+          "backlogType": "TASK",
+          "prioridad": "HIGH",
+          "descripcion": "Quién atiende, por qué canal, en cuánto tiempo y cómo se factura lo que sale del alcance.",
+          "entregable": "traspaso_soporte"
+        },
+        {
+          "clave": "gestion_incidentes",
+          "titulo": "Registrar cada incidente como requisito y prueba nueva",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Un incidente no se cierra con un parche suelto: queda como requisito, con prueba y enlazado a la versión que lo corrige.",
+          "entregable": "registro_incidentes"
+        },
+        {
+          "clave": "solicitudes_cambio",
+          "titulo": "Atender las solicitudes de cambio como ciclos cortos versionados",
+          "tipo": "HUMANA",
+          "area": "Client Delivery",
+          "backlogType": "TASK",
+          "prioridad": "MEDIUM",
+          "descripcion": "Spec, prueba y construcción por cada cambio, con su nueva versión y su cobro si corresponde.",
+          "entregable": "solicitudes_cambio"
+        },
+        {
+          "clave": "retroalimentacion",
+          "titulo": "Devolver lo aprendido a las plantillas de preventa",
+          "tipo": "AGENTE",
+          "area": "Operations",
+          "backlogType": "DOCUMENTACION",
+          "prioridad": "MEDIUM",
+          "descripcion": "Estimaciones reales frente a las previstas, riesgos que sí ocurrieron y ajustes a plantillas y cuestionarios.",
+          "entregable": "retroalimentacion"
+        }
+      ],
+      "entregables": [
+        "Soporte traspasado con su SLA",
+        "Registro de incidentes como requisitos y pruebas",
+        "Solicitudes de cambio atendidas",
+        "Retroalimentación a las plantillas"
+      ],
+      "puerta": {
+        "tipo": "NORMAL",
+        "aprobador": "DIRECCION",
+        "criterios": [
+          "El soporte quedó traspasado con su SLA acordado",
+          "Los incidentes del periodo están registrados como requisitos con prueba",
+          "Se devolvió lo aprendido a las plantillas de preventa"
+        ]
+      },
+      "recursos": [
+        {
+          "tipo": "HUB_CODIGO",
+          "etiqueta": "Repositorio y versiones",
+          "descripcion": "Versiones publicadas durante la operación."
+        },
+        {
+          "tipo": "ADJUNTOS",
+          "etiqueta": "Acuerdo de soporte y registro de cambios",
+          "descripcion": "Súbelos como adjuntos del proyecto."
+        }
+      ],
+      "sesiones": [
+        {
+          "clave": "operacion",
+          "titulo": "Revisión de operación",
+          "tipo": "REVISION",
+          "objetivo": "Revisar incidentes, cambios pedidos y lo que hay que devolver a las plantillas.",
+          "artefactos": [
+            "entrega",
+            "prd"
+          ],
+          "resultado": "Estado de la operación y mejoras para próximas preventas.",
+          "cierre": [
+            "Los incidentes tienen requisito y prueba",
+            "Las solicitudes de cambio tienen su versión",
+            "Las lecciones están en las plantillas"
+          ]
+        }
+      ],
+      "requeridos": [
+        {
+          "clave": "traspaso_soporte",
+          "titulo": "Soporte traspasado con su SLA",
+          "ayuda": "Marca el entregable como listo y deja el enlace al acuerdo de soporte.",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
+        },
+        {
+          "clave": "registro_incidentes",
+          "titulo": "Registro de incidentes como requisitos y pruebas",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
+        },
+        {
+          "clave": "solicitudes_cambio",
+          "titulo": "Solicitudes de cambio atendidas",
+          "ayuda": "Marca el entregable como listo y deja el enlace a donde vive (Drive u otro sitio).",
+          "verifica": {
+            "tipo": "manual"
+          },
+          "formato": "enlace"
+        },
+        {
+          "clave": "retroalimentacion",
+          "titulo": "Retroalimentación a las plantillas de preventa",
+          "ayuda": "Escribe el documento en el portal (o pídele un borrador a la IA). Se descarga como Word, PDF, HTML o MD.",
+          "verifica": {
+            "tipo": "documento_fase"
+          },
+          "formato": "doc"
         }
       ]
     }

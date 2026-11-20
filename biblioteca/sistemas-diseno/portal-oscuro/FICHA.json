@@ -1,0 +1,10 @@
+{
+  "descripcion": "Oscuro con cristal y acento índigo, como el portal de ArchiTechIA. Para herramientas internas y paneles de operación.",
+  "cuandoUsar": "Aplicaciones internas, paneles de operación y demos que deben verse como parte del portal.",
+  "palabrasClave": [],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Valores tomados de las pantallas del portal (Oficina › Proyectos). Los tokens son punto de partida: ajústalos con el equipo de diseño."
+}

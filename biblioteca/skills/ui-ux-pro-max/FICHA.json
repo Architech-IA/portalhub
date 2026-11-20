@@ -1,0 +1,11 @@
+{
+  "descripcion": "Reglas de UX por prioridad: accesibilidad, interacción táctil, rendimiento, estilo, layout, tipografía y color, animación, formularios, navegación y gráficos.",
+  "cuandoUsar": "Al diseñar o revisar la usabilidad de una interfaz: formularios, navegación, estados, accesibilidad, gráficos y comportamiento responsive.",
+  "palabrasClave": ["accesibilidad", "formulario", "navegación", "navegacion", "responsive", "tabla", "gráfico", "grafico", "modal", "botón", "boton", "login", "usabilidad", "contraste", "ux", "pantalla", "dashboard", "interfaz"],
+  "roles": ["Development", "Design", "Quality & Testing"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "MIT",
+  "origen": "Resumen adaptado al portal a partir de la skill «ui-ux-pro-max» v2.5.0 (MIT, Next Level Builder). El original está en referencias/SKILL.md.",
+  "sincronizarClaudeCode": false
+}

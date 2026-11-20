@@ -282,7 +282,7 @@ mod tests {
         let f = fila_cartera(&p);
         assert_eq!(f["faseNombre"], "Contacto");
         assert_eq!(f["faseNumero"], 2);
-        assert_eq!(f["totalFases"], 12);
+        assert_eq!(f["totalFases"], 14);
         assert_eq!(f["puerta"]["ok"], 1);
         assert_eq!(f["puerta"]["total"], 2);
         assert_eq!(f["puerta"]["lista"], false);

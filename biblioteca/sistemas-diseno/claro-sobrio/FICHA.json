@@ -1,0 +1,10 @@
+{
+  "descripcion": "Claro, sobrio y de alta legibilidad, con acento verde petróleo. Para entregar a clientes y aplicaciones de uso diario.",
+  "cuandoUsar": "Aplicaciones que se entregan al cliente, formularios largos, CRM y herramientas de uso diario en escritorio y móvil.",
+  "palabrasClave": [],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Sistema de partida creado para proyectos de cliente. Se re-marca con la identidad del cliente al cerrar el proyecto."
+}

@@ -1,0 +1,10 @@
+{
+  "descripcion": "Panel de indicadores: fila de KPIs, una tendencia y una lista de lo que requiere atención.",
+  "cuandoUsar": "Pantallas de resumen o tableros donde la persona escanea el estado y decide qué atender.",
+  "palabrasClave": ["dashboard", "tablero", "kpi", "indicadores", "métricas", "metricas", "resumen", "panel de control"],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Plantilla propia de ArchiTechIA (Next.js + Tailwind)."
+}

@@ -1,0 +1,10 @@
+{
+  "descripcion": "Tabla de datos con búsqueda, filtros, orden y estados de vacío, cargando y error.",
+  "cuandoUsar": "Listados de registros: clientes, lotes, tareas, facturas, usuarios.",
+  "palabrasClave": ["tabla", "listado", "lista", "filtros", "filtro", "búsqueda", "busqueda", "registros", "grilla"],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Plantilla propia de ArchiTechIA (Next.js + Tailwind)."
+}

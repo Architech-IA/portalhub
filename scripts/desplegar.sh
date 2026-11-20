@@ -36,6 +36,7 @@ mkdir -p /opt/portalhub
 cp -p /opt/portalhub/portalhub /opt/portalhub/portalhub.anterior
 install -m 755 portalhub.bin /opt/portalhub/portalhub.new && mv /opt/portalhub/portalhub.new /opt/portalhub/portalhub
 say "binario instalado (el anterior quedó en /opt/portalhub/portalhub.anterior); reiniciando servicios"
+./scripts/sincronizar_biblioteca.sh >> "$LOG" 2>&1 || say "aviso: no se pudo publicar la biblioteca"
 pm2 restart portalhub portalhub-motor >/dev/null 2>&1
 
 sano() { [[ "$(curl -s -m 5 http://127.0.0.1:3100/health)" == *'"db":true'* ]] && [[ "$(curl -s -m 5 http://127.0.0.1:3101/health)" == *'"status":"ok"'* ]]; }
@@ -44,6 +45,7 @@ for i in $(seq 1 30); do sano && { say "OK: portalhub y motor sanos tras ~$((i*2
 say "los servicios NO responden bien — VOLVIENDO al binario anterior"
 mv /opt/portalhub/portalhub /opt/portalhub/portalhub.fallido
 cp -p /opt/portalhub/portalhub.anterior /opt/portalhub/portalhub
+./scripts/sincronizar_biblioteca.sh >> "$LOG" 2>&1 || say "aviso: no se pudo publicar la biblioteca"
 pm2 restart portalhub portalhub-motor >/dev/null 2>&1
 for i in $(seq 1 30); do sano && break; sleep 2; done
 say "revertido; estado: $(curl -s -m 5 http://127.0.0.1:3100/health) | $(curl -s -m 5 http://127.0.0.1:3101/health). Binario fallido en /opt/portalhub/portalhub.fallido"

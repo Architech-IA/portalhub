@@ -1,0 +1,10 @@
+{
+  "descripcion": "Pantalla de inicio de sesión accesible, con errores claros y límite de intentos en el servidor.",
+  "cuandoUsar": "Cualquier aplicación con acceso por usuario y contraseña o por proveedor externo.",
+  "palabrasClave": ["login", "inicio de sesión", "inicio de sesion", "autenticación", "autenticacion", "contraseña", "contrasena", "sesión", "sesion", "acceso"],
+  "roles": ["Development", "Design"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Propia",
+  "origen": "Plantilla propia de ArchiTechIA (Next.js + Tailwind)."
+}

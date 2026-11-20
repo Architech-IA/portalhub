@@ -1,0 +1,11 @@
+{
+  "descripcion": "Criterio de diseño de interfaces: jerarquía, tipografía, color, espaciado, estados y accesibilidad, con lista de errores típicos a evitar.",
+  "cuandoUsar": "Al crear o rediseñar pantallas, componentes, paneles, landings o formularios, y al revisar la calidad visual de una interfaz.",
+  "palabrasClave": ["interfaz", "pantalla", "componente", "diseño", "diseno", "landing", "panel", "dashboard", "formulario", "estilo", "tipografía", "tipografia", "layout", "responsive", "ui"],
+  "roles": ["Development", "Design", "Quality & Testing"],
+  "version": "1.0.0",
+  "dueno": "Equipo ArchiTechIA",
+  "licencia": "Apache-2.0",
+  "origen": "Resumen adaptado al portal a partir de la skill «impeccable» v4.2.0 (Apache 2.0). Los originales están en referencias/.",
+  "sincronizarClaudeCode": false
+}

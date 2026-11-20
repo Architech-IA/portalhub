@@ -259,6 +259,12 @@ pub async fn construir_contexto(st: &AppState, tarea: &str) -> R<String> {
         }
     }
 
+    // Biblioteca de conocimiento y diseño (MASD-0026-0010): solo para tareas de interfaz; el sistema de diseño del proyecto manda.
+    if let Some(b) = crate::routes::biblioteca::bloque_para_tarea(st, so(&t, "solId").as_deref(), &sg(&t, "taskTitle"), &so(&t, "taskDescription").unwrap_or_default(), &sg(&t, "areaName")).await {
+        variable.push(String::new());
+        variable.push(b);
+    }
+
     if let Some(dep_id) = so(&t, "dependsOnTaskId") {
         let dep = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('taskCode', "taskCode", 'title', title, 'resultado', resultado, 'status', status) FROM "BacklogItem" WHERE id = $1"#, &[B::T(dep_id)]).await.map_err(err_db)?;
         if let Some(dep) = dep {
