@@ -46,6 +46,20 @@ pub(crate) fn nivel_por_defecto(fase: &str, bloque: &str) -> &'static str {
     }
 }
 
+/// Nivel de autonomía de la fase en la que está ahora el proyecto (el que fijó el equipo o el de partida).
+/// Es lo que el motor consulta al integrar una tarea: en una fase ASISTIDA, una desviación del diseño sin decidir bloquea la integración.
+pub(crate) async fn nivel_actual(st: &AppState, sol: &str) -> String {
+    let Ok(Some(f)) = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('actual', "faseActual", 'def', definicion) FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(sol.into())]).await else {
+        return "SUPERVISADA".into();
+    };
+    let actual = f["actual"].as_str().unwrap_or("");
+    if let Ok(Some(n)) = crate::util::fetch_text_opt(&st.pool, r#"SELECT nivel FROM "ProyectoAutonomia" WHERE "solucionId" = $1 AND "faseClave" = $2"#, &[B::T(sol.into()), B::T(actual.into())]).await {
+        return n;
+    }
+    let bloque = f["def"]["fases"].as_array().and_then(|a| a.iter().find(|x| x["clave"] == actual)).and_then(|x| x["bloque"].as_str()).unwrap_or("");
+    nivel_por_defecto(actual, bloque).to_string()
+}
+
 /// Datos mínimos para sugerir un nivel.
 pub(crate) struct Evidencia {
     pub ejecuciones: i64,
@@ -148,6 +162,17 @@ async fn metricas(State(st): State<AppState>, sesion: Session, Path(id): Path<St
         Err(_) => (0, 0),
     };
     let (sug, motivos) = sugerir(&e);
+    // Incidentes y solicitudes de cambio (defectos tras la entrega).
+    let operacion = fetch_json(
+        &st.pool,
+        r#"SELECT jsonb_build_object(
+             'incidentes', jsonb_build_object('abiertos', COUNT(*) FILTER (WHERE tipo = 'INCIDENTE' AND estado NOT IN ('CERRADO', 'RECHAZADO')), 'cerrados', COUNT(*) FILTER (WHERE tipo = 'INCIDENTE' AND estado IN ('CERRADO', 'RECHAZADO')),
+                                              'criticosAbiertos', COUNT(*) FILTER (WHERE tipo = 'INCIDENTE' AND severidad IN ('CRITICA', 'ALTA') AND estado NOT IN ('CERRADO', 'RECHAZADO'))),
+             'solicitudes', jsonb_build_object('abiertas', COUNT(*) FILTER (WHERE tipo = 'SOLICITUD_CAMBIO' AND estado NOT IN ('CERRADO', 'RECHAZADO')), 'cerradas', COUNT(*) FILTER (WHERE tipo = 'SOLICITUD_CAMBIO' AND estado IN ('CERRADO', 'RECHAZADO'))))
+           FROM "CasoOperacion" WHERE "solucionId" = $1"#,
+        &[B::T(id.clone())],
+    )
+    .await?;
     Ok(Json(json!({
         "solucionId": id,
         "ejecuciones": { "total": e.ejecuciones, "hechas": ej["hechas"], "fallidas": ej["fallidas"], "enCurso": ej["enCurso"] },
@@ -156,9 +181,10 @@ async fn metricas(State(st): State<AppState>, sesion: Session, Path(id): Path<St
         "backlog": backlog,
         "propuestasDeCambio": propuestas,
         "artefactos": { "conContenido": cont, "desactualizados": desact },
+        "operacion": operacion,
         "fases": fases,
         "sugerencia": { "nivel": sug, "motivos": motivos, "umbrales": { "supervisada": { "ejecuciones": MIN_EJECUCIONES_SUPERVISADA, "tasa": MIN_TASA_SUPERVISADA }, "autonoma": { "ejecuciones": MIN_EJECUCIONES_AUTONOMA, "tasa": MIN_TASA_AUTONOMA } } },
-        "sinDato": ["requisitos con prueba (espera la carpeta spec/ y las pruebas de aceptación)", "defectos tras la entrega (espera el tipo Incidente)"],
+        "sinDato": ["requisitos con prueba automática real (lo comprueba trazabilidad.mjs dentro del repositorio del proyecto; el portal solo cuenta las pruebas de aceptación aprobadas)"],
     })))
 }
 
@@ -197,7 +223,7 @@ async fn autonomia_ver(State(st): State<AppState>, sesion: Session, Path(id): Pa
         "fases": fases,
         "niveles": NIVELES,
         "sugerencia": { "nivel": sug, "motivos": motivos },
-        "nota": "El nivel es una declaración del equipo. Aprobar el PRD y el diseño, aceptar un cambio de spec, hacer merge a producción, desplegar y enviar algo al cliente siempre exigen a una persona.",
+        "nota": "Efecto del nivel: en una fase ASISTIDA, una tarea que se aparta del diseño no se integra hasta que una persona decida la propuesta de cambio; en SUPERVISADA y AUTONOMA se integra y la propuesta queda pendiente. Lo demás es una declaración del equipo. Aprobar el PRD y el diseño, aceptar un cambio de spec, hacer merge a producción, desplegar y enviar algo al cliente siempre exigen a una persona.",
     })))
 }
 

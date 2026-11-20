@@ -14,6 +14,8 @@ pub mod grafo;
 pub mod infra;
 pub mod lead;
 pub mod repo;
+pub mod pruebas;
+pub mod diseno_ui;
 pub mod seguridad;
 pub mod spec_export;
 

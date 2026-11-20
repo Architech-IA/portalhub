@@ -9,6 +9,9 @@ pub mod metricas;
 pub mod estado_vivo;
 pub mod pruebas_aceptacion;
 pub mod fuentes;
+pub mod impacto;
+pub mod operacion;
+pub mod conocimiento;
 pub mod biblioteca;
 pub mod paquete_cierre;
 pub mod auth;
@@ -80,6 +83,9 @@ pub fn router() -> Router<AppState> {
         .merge(estado_vivo::router())
         .merge(pruebas_aceptacion::router())
         .merge(fuentes::router())
+        .merge(impacto::router())
+        .merge(operacion::router())
+        .merge(conocimiento::router())
         .merge(biblioteca::router())
         .merge(ejecutor::router())
         .merge(fases::router())

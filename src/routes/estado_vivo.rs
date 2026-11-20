@@ -129,6 +129,19 @@ pub(crate) async fn cuerpo(st: &AppState, sol: &str) -> Result<String, String> {
         Ok((filas, _)) => filas.iter().filter(|t| t["desactualizado"] == true).map(|t| t["nombre"].as_str().unwrap_or("").to_string()).collect(),
         Err(_) => vec![],
     };
+    // Operación: incidentes y solicitudes de cambio abiertos.
+    let op = fetch_json(
+        &st.pool,
+        r#"SELECT jsonb_build_object('incidentes', COUNT(*) FILTER (WHERE tipo = 'INCIDENTE' AND estado NOT IN ('CERRADO', 'RECHAZADO')), 'solicitudes', COUNT(*) FILTER (WHERE tipo = 'SOLICITUD_CAMBIO' AND estado NOT IN ('CERRADO', 'RECHAZADO')))
+           FROM "CasoOperacion" WHERE "solucionId" = $1"#,
+        &[B::T(sol.into())],
+    )
+    .await
+    .map_err(e)?;
+    let (inc, sc) = (op["incidentes"].as_i64().unwrap_or(0), op["solicitudes"].as_i64().unwrap_or(0));
+    if inc + sc > 0 {
+        m.push_str(&format!("**Operación:** {inc} incidente(s) y {sc} solicitud(es) de cambio abiertos.\n\n"));
+    }
     m.push_str("**Por revisar:**\n");
     m.push_str(&format!("- Propuestas de cambio pendientes: {}\n", pend["propuestas"].as_i64().unwrap_or(0)));
     m.push_str(&format!("- Ítems de actas y notas sin decidir: {}\n", pend["actas"].as_i64().unwrap_or(0)));

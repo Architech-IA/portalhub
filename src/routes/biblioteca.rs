@@ -160,6 +160,15 @@ pub async fn bloque_para_tarea(st: &AppState, solucion_id: Option<&str>, titulo:
     Some(format!("=== BIBLIOTECA DE DISEÑO (solo si la tarea toca interfaz) ===\n{}", partes.join("\n\n")))
 }
 
+/// Colores (#rrggbb en minúscula) del sistema de diseño elegido para el proyecto (vacío si no eligió ninguno).
+pub(crate) async fn hex_del_sistema_del_proyecto(st: &AppState, solucion_id: &str) -> std::collections::HashSet<String> {
+    let elegido = fetch_text_opt(&st.pool, r#"SELECT sistema FROM "ProyectoSistemaDiseno" WHERE "solucionId" = $1"#, &[B::T(solucion_id.into())]).await.ok().flatten();
+    match elegido.filter(|n| nombre_valido(n)) {
+        Some(n) => crate::motor::diseno_ui::hex_de(&texto_de("sistemas-diseno", &n, "sistema.json").unwrap_or_default()),
+        None => std::collections::HashSet::new(),
+    }
+}
+
 // ═══════════════════════════ Rutas ═══════════════════════════
 fn exigir_lectura(sesion: &Session) -> Result<(), ApiError> {
     if !sesion.is_service {

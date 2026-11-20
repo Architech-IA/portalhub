@@ -826,6 +826,8 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                     emitir_traza(st, tarea, Some(exec_id), "info", &format!("el revisor detectó una desviación del diseño técnico — queda como propuesta en el Diseño técnico del hub: {}", cortar(r, 300))).await;
                 }
             }
+            // ¿Hubo desviación del diseño? (la declaró el agente o la detectó el revisor)
+            let hay_deriva = c.resumen.contains(super::diseno::MARCA_CAMBIO) || v.checklist.iter().any(|x| x["reason"].as_str().map(|r| r.contains(super::diseno::MARCA_REVISOR)).unwrap_or(false));
             verificado = if v.paso { "DONE".into() } else { "FAILED".into() };
             checklist = v.checklist;
             if chequeo.corrio {
@@ -844,6 +846,38 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
                 checklist.push(json!({ "criterion": "Revisión de seguridad con reglas fijas (sesión y rol, secretos, ejecución dinámica)", "passed": graves == 0 || advertir, "reason": texto }));
                 if graves > 0 && !advertir {
                     verificado = "FAILED".into();
+                }
+            }
+            // Revisión de diseño con reglas fijas (accesibilidad y sistema de diseño): informativa.
+            let hall_dis = super::diseno_ui::revisar_tarea(st, so(&t, "solucionId").as_deref(), &raiz_chequeo, &archivos).await;
+            if !hall_dis.is_empty() {
+                let texto = super::diseno_ui::resumir(&hall_dis);
+                emitir_traza(st, tarea, Some(exec_id), "info", &format!("revisión de diseño — {} aviso(s):\n{texto}", hall_dis.len())).await;
+                checklist.push(json!({ "criterion": "Revisión de diseño con reglas fijas (accesibilidad y sistema de diseño)", "passed": true, "reason": texto }));
+            }
+            // Pruebas de aceptación aprobadas del requisito que construye la tarea: «hecho» = existen y pasan.
+            if let (Some(sid), Some(rid)) = (so(&t, "solucionId"), so(&t, "prdRequisitoId")) {
+                if let Some(req) = super::pruebas::requisito_con_pruebas_aprobadas(st, &sid, &rid).await {
+                    let modo = super::pruebas::modo();
+                    if modo != super::pruebas::Modo::Apagado {
+                        let r = super::pruebas::verificar(&raiz_chequeo, &req).await;
+                        let exige = modo == super::pruebas::Modo::Exigir;
+                        emitir_traza(st, tarea, Some(exec_id), if r.paso { "check" } else if exige { "fail" } else { "info" }, &format!("pruebas de aceptación de {req} — {}", if r.paso { "PASAN" } else { "NO PASAN" })).await;
+                        checklist.push(json!({ "criterion": format!("Las pruebas de aceptación de {req} existen y pasan"), "passed": r.paso || !exige, "reason": r.detalle }));
+                        if !r.paso && exige {
+                            verificado = "FAILED".into();
+                        }
+                    }
+                }
+            }
+            // Autonomía: en una fase ASISTIDA, una desviación del diseño sin decidir bloquea la integración.
+            if hay_deriva && verificado == "DONE" {
+                if let Some(sid) = so(&t, "solucionId") {
+                    if crate::routes::metricas::nivel_actual(st, &sid).await == "ASISTIDA" {
+                        verificado = "BLOCKED".into();
+                        checklist.push(json!({ "criterion": "Desviación del diseño decidida por una persona (fase ASISTIDA)", "passed": false, "reason": "La tarea se apartó del diseño técnico. En una fase asistida no se integra hasta que una persona acepte o rechace la propuesta de cambio (Artefactos › Propuestas) y reactive la tarea." }));
+                        emitir_traza(st, tarea, Some(exec_id), "fail", "fase ASISTIDA: la tarea queda bloqueada hasta que se decida la propuesta de cambio de diseño").await;
+                    }
                 }
             }
             let pasados = checklist.iter().filter(|x| x["passed"] == true).count();

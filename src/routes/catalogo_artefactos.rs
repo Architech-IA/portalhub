@@ -140,12 +140,39 @@ async fn instancia(st: &AppState, id: &str, sol: &Value, t: &Value) -> Result<Va
             let tipos = serde_json::to_string(&fuente["tiposFuente"]).unwrap_or_else(|_| "[]".into());
             let r = fetch_json(
                 &st.pool,
-                r#"SELECT jsonb_build_object('n', COUNT(*), 'actualizado', MAX("updatedAt")) FROM "FuenteProyecto" WHERE "solucionId" = $1 AND tipo IN (SELECT jsonb_array_elements_text($2::text::jsonb))"#,
+                r#"SELECT jsonb_build_object('n', COUNT(*), 'actualizado', MAX("updatedAt"),
+                     'vencidas', COUNT(*) FILTER (WHERE (meta->>'caduca') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CASE WHEN (meta->>'caduca') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (meta->>'caduca')::date < CURRENT_DATE ELSE false END))
+                   FROM "FuenteProyecto" WHERE "solucionId" = $1 AND tipo IN (SELECT jsonb_array_elements_text($2::text::jsonb))"#,
                 &[B::T(id.into()), B::T(tipos)],
             )
             .await?;
             let existe = r["n"].as_i64().unwrap_or(0) > 0;
-            Ok(json!({ "soporte": true, "existe": existe, "estado": if existe { "VIGENTE" } else { "SIN_CONTENIDO" }, "version": Value::Null, "actualizado": r["actualizado"], "cantidad": r["n"] }))
+            // Una investigación pasada de su fecha de caducidad queda marcada para revisar.
+            let estado = if !existe { "SIN_CONTENIDO" } else if r["vencidas"].as_i64().unwrap_or(0) > 0 { "REVISAR" } else { "VIGENTE" };
+            Ok(json!({ "soporte": true, "existe": existe, "estado": estado, "version": Value::Null, "actualizado": r["actualizado"], "cantidad": r["n"] }))
+        }
+        "casos" => {
+            let tc = fuente["tipoCaso"].as_str().unwrap_or("");
+            let r = fetch_json(
+                &st.pool,
+                r#"SELECT jsonb_build_object('n', COUNT(*), 'abiertos', COUNT(*) FILTER (WHERE estado NOT IN ('CERRADO', 'RECHAZADO')), 'actualizado', MAX("updatedAt")) FROM "CasoOperacion" WHERE "solucionId" = $1 AND tipo = $2"#,
+                &[B::T(id.into()), B::T(tc.into())],
+            )
+            .await?;
+            let (n, ab) = (r["n"].as_i64().unwrap_or(0), r["abiertos"].as_i64().unwrap_or(0));
+            let estado = if n == 0 { "SIN_CONTENIDO" } else if ab > 0 { "CON_ABIERTOS" } else { "VIGENTE" };
+            Ok(json!({ "soporte": true, "existe": n > 0, "estado": estado, "version": Value::Null, "actualizado": r["actualizado"], "cantidad": n, "abiertos": ab }))
+        }
+        "decisiones" => {
+            let n = fetch_json(
+                &st.pool,
+                r#"SELECT to_jsonb((SELECT COUNT(*) FROM "ActaItem" WHERE "solucionId" = $1 AND tipo = 'DECISION' AND estado = 'ACEPTADO') + (SELECT COUNT(*) FROM "ArtefactoPropuesta" WHERE "solucionId" = $1 AND estado = 'ACEPTADA' AND origen IN ('TAREA', 'REVISOR', 'OPERACION')))"#,
+                &[B::T(id.into())],
+            )
+            .await?
+            .as_i64()
+            .unwrap_or(0);
+            Ok(json!({ "soporte": true, "existe": n > 0, "estado": if n > 0 { "VIGENTE" } else { "SIN_CONTENIDO" }, "version": Value::Null, "cantidad": n }))
         }
         "pruebas_aceptacion" => {
             let r = fetch_json(

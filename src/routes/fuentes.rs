@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 use crate::{
     error::{ApiError, ApiResult},
-    routes::solucion_hub::{nombre_de, parse_o_texto},
+    routes::solucion_hub::{es_admin, nombre_de, parse_o_texto},
     session::Session,
     state::AppState,
     util::{exec, fetch_json, fetch_json_opt, new_id, B},
@@ -25,6 +25,9 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/proyectos/{id}/fuentes", get(listar).post(crear))
         .route("/api/proyectos/{id}/fuentes/{fid}", get(ver))
+        .route("/api/proyectos/{id}/fuentes/desde-reunion", post(desde_reunion))
+        .route("/api/proyectos/{id}/reuniones-disponibles", get(reuniones_disponibles))
+        .route("/api/proyectos/{id}/fuentes/{fid}/purgar", post(purgar))
         .route("/api/proyectos/{id}/fuentes/{fid}/procesar", post(procesar))
         .route("/api/proyectos/{id}/acta-items/{iid}/decidir", post(decidir))
 }
@@ -43,6 +46,13 @@ pub(crate) struct Item {
     pub cita: Option<String>,
     pub destino: Option<String>,
     pub responsable: Option<String>,
+    pub minuto: Option<String>,
+}
+
+/// ¿Parece una marca de tiempo (m:ss, mm:ss o h:mm:ss)?
+pub(crate) fn es_minuto(s: &str) -> bool {
+    let partes: Vec<&str> = s.split(':').collect();
+    (partes.len() == 2 || partes.len() == 3) && partes.iter().all(|p| !p.is_empty() && p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())) && partes.last().map(|p| p.len() == 2).unwrap_or(false)
 }
 
 fn limpio(v: &Value, k: &str, max: usize) -> Option<String> {
@@ -65,7 +75,8 @@ pub(crate) fn parsear_extraccion(texto: &str) -> Option<(String, Vec<Item>)> {
             continue;
         }
         let destino = limpio(it, "destinoArtefacto", 40).filter(|d| ARTEFACTOS_DESTINO.contains(&d.as_str()));
-        items.push(Item { tipo, texto, cita: limpio(it, "cita", 300), destino, responsable: limpio(it, "responsable", 80) });
+        let minuto = limpio(it, "minuto", 8).map(|m| m.trim_matches(|c| c == '[' || c == ']' || c == '(' || c == ')').to_string()).filter(|m| es_minuto(m));
+        items.push(Item { tipo, texto, cita: limpio(it, "cita", 300), destino, responsable: limpio(it, "responsable", 80), minuto });
         if items.len() >= MAX_ITEMS {
             break;
         }
@@ -86,6 +97,8 @@ async fn listar(State(st): State<AppState>, sesion: Session, Path(id): Path<Stri
         &st.pool,
         r#"SELECT COALESCE(jsonb_agg(jsonb_build_object('id', f.id, 'tipo', f.tipo, 'titulo', f.titulo, 'fecha', f.fecha, 'faseClave', f."faseClave", 'visibilidad', f.visibilidad,
                 'estado', f.estado, 'resumen', f.resumen, 'creadoPor', f."creadoPor", 'createdAt', f."createdAt",
+                'meta', f.meta, 'origen', f.origen, 'purgada', COALESCE((f.meta->>'purgada')::boolean, false),
+                'vencida', CASE WHEN (f.meta->>'caduca') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN (f.meta->>'caduca')::date < CURRENT_DATE ELSE false END,
                 'items', (SELECT COUNT(*) FROM "ActaItem" a WHERE a."fuenteId" = f.id),
                 'pendientes', (SELECT COUNT(*) FROM "ActaItem" a WHERE a."fuenteId" = f.id AND a.estado = 'PENDIENTE')) ORDER BY f."createdAt" DESC), '[]'::jsonb)
              FROM "FuenteProyecto" f WHERE f."solucionId" = $1"#,
@@ -119,7 +132,14 @@ async fn crear(State(st): State<AppState>, sesion: Session, Path(id): Path<Strin
         return Err(ApiError::not_found("No encontrado"));
     }
     let fid = new_id();
-    let meta = if b["meta"].is_object() { b["meta"].clone() } else { json!({}) };
+    let mut meta = if b["meta"].is_object() { b["meta"].clone() } else { json!({}) };
+    if tipo == "INVESTIGACION" {
+        // Una investigación lleva su pregunta, su nivel de confianza y cuándo caduca (pasada esa fecha, queda para revisar).
+        let pregunta = limpio(&b, "pregunta", 300).ok_or_else(|| ApiError::bad_request("La investigación necesita su pregunta: ¿qué se quiere saber?"))?;
+        let confianza = b["confianza"].as_str().map(|c| c.to_uppercase()).filter(|c| ["ALTA", "MEDIA", "BAJA"].contains(&c.as_str())).unwrap_or_else(|| "MEDIA".into());
+        let caduca = limpio(&b, "caduca", 10).filter(|c| c.len() == 10 && c.chars().enumerate().all(|(i, ch)| if i == 4 || i == 7 { ch == '-' } else { ch.is_ascii_digit() }));
+        meta = json!({ "pregunta": pregunta, "confianza": confianza, "caduca": caduca });
+    }
     exec(
         &st.pool,
         r#"INSERT INTO "FuenteProyecto" (id, "solucionId", tipo, titulo, contenido, fecha, "faseClave", visibilidad, origen, enlace, meta, "creadoPor")
@@ -170,7 +190,7 @@ async fn procesar(State(st): State<AppState>, sesion: Session, Path((id, fid)): 
         ctx.push_str(&format!("REQ-{:03}: {}\n", i + 1, t.chars().take(120).collect::<String>()));
     }
     let tipo = f["tipo"].as_str().unwrap_or("NOTA");
-    let sistema = "Eres un analista que extrae lo accionable de reuniones, notas y documentos de un proyecto de software. Responde SOLO con un objeto JSON, sin explicaciones ni bloques de código: {\"resumen\":\"dos frases\",\"items\":[{\"tipo\":\"DECISION|ACCION|PREGUNTA|RIESGO|CONTRADICCION\",\"texto\":\"...\",\"cita\":\"frase literal corta del texto\",\"destinoArtefacto\":\"prd|disenoTecnico|planEjecucion|null\",\"responsable\":\"nombre o null\"}]}. Reglas: extrae SOLO lo que dice el texto, no inventes; DECISION es algo que se acordó y cambia el alcance, el diseño o el plan (indica a qué artefacto afecta); ACCION es algo que alguien debe hacer; PREGUNTA es algo que quedó sin responder; RIESGO es algo que podría salir mal; CONTRADICCION solo si lo dicho choca con el PRD resumido que recibes (explica con cuál requisito). Máximo 12 ítems, en español, sin duplicados.";
+    let sistema = "Eres un analista que extrae lo accionable de reuniones, notas y documentos de un proyecto de software. Responde SOLO con un objeto JSON, sin explicaciones ni bloques de código: {\"resumen\":\"dos frases\",\"items\":[{\"tipo\":\"DECISION|ACCION|PREGUNTA|RIESGO|CONTRADICCION\",\"texto\":\"...\",\"cita\":\"frase literal corta del texto\",\"destinoArtefacto\":\"prd|disenoTecnico|planEjecucion|null\",\"responsable\":\"nombre o null\",\"minuto\":\"mm:ss o null\"}]}. Reglas: si el texto trae marcas de tiempo como [12:34] o (12:34), en «minuto» pon la más cercana a la frase citada (si no hay marcas, null); extrae SOLO lo que dice el texto, no inventes; DECISION es algo que se acordó y cambia el alcance, el diseño o el plan (indica a qué artefacto afecta); ACCION es algo que alguien debe hacer; PREGUNTA es algo que quedó sin responder; RIESGO es algo que podría salir mal; CONTRADICCION solo si lo dicho choca con el PRD resumido que recibes (explica con cuál requisito). Máximo 12 ítems, en español, sin duplicados.";
     let usuario = format!("PRD RESUMIDO:\n{}\nFUENTE ({tipo}) «{}»:\n{}", if ctx.is_empty() { "(sin PRD todavía)" } else { &ctx }, f["titulo"].as_str().unwrap_or(""), contenido.chars().take(MAX_PARA_MODELO).collect::<String>());
     let respuesta = crate::llm::call_open_code(&st, sistema, &usuario, &format!("fuente-{fid}"), 2500, 50).await.map_err(|e| ApiError::bad_request(format!("El modelo no respondió: {e}")))?;
     let Some((resumen, items)) = parsear_extraccion(&respuesta) else {
@@ -180,8 +200,8 @@ async fn procesar(State(st): State<AppState>, sesion: Session, Path((id, fid)): 
     for it in &items {
         exec(
             &st.pool,
-            r#"INSERT INTO "ActaItem" (id, "fuenteId", "solucionId", tipo, texto, cita, "destinoArtefacto", responsable) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-            &[B::T(new_id()), B::T(fid.clone()), B::T(id.clone()), B::T(it.tipo.clone()), B::T(it.texto.clone()), B::OT(it.cita.clone()), B::OT(it.destino.clone()), B::OT(it.responsable.clone())],
+            r#"INSERT INTO "ActaItem" (id, "fuenteId", "solucionId", tipo, texto, cita, "destinoArtefacto", responsable, minuto) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
+            &[B::T(new_id()), B::T(fid.clone()), B::T(id.clone()), B::T(it.tipo.clone()), B::T(it.texto.clone()), B::OT(it.cita.clone()), B::OT(it.destino.clone()), B::OT(it.responsable.clone()), B::OT(it.minuto.clone())],
         )
         .await?;
     }
@@ -251,9 +271,156 @@ async fn decidir(State(st): State<AppState>, sesion: Session, Path((id, iid)): P
     Ok(Json(json!({ "ok": true, "estado": estado, "resultado": resultado })))
 }
 
+// ═══════════════════════════ Reuniones del calendario como fuente ═══════════════════════════
+/// Texto de una reunión del calendario: datos básicos, notas, lo registrado en su hub (objetivo, puntos, notas, decisiones) y sus acciones.
+pub(crate) fn texto_de_reunion(m: &Value, acciones: &[Value]) -> String {
+    let mut t = format!("# {}\n\n", m["title"].as_str().unwrap_or("Reunión"));
+    let datos: Vec<String> = [("Fecha", "date"), ("Lugar", "location"), ("Asistentes", "attendees")].iter().filter_map(|(r, k)| m[*k].as_str().filter(|s| !s.trim().is_empty()).map(|s| format!("{r}: {}", s.trim()))).collect();
+    if !datos.is_empty() {
+        t.push_str(&format!("{}\n\n", datos.join(" · ")));
+    }
+    for (rotulo, k) in [("Descripción", "description"), ("Notas", "notes")] {
+        if let Some(s) = m[k].as_str().filter(|s| !s.trim().is_empty()) {
+            t.push_str(&format!("## {rotulo}\n\n{}\n\n", s.trim()));
+        }
+    }
+    let mut hub = parse_o_texto(m["hub"].as_str().unwrap_or(""));
+    if let Some(o) = hub.as_object_mut() {
+        o.remove("archivos");
+        // Las notas del hub viajan como un JSON dentro de un texto: se abre para leerlas.
+        if let Some(n) = o.get("notas").and_then(|n| n.as_str()).map(parse_o_texto) {
+            o.insert("notas".into(), n);
+        }
+        if !o.is_empty() {
+            t.push_str("## Hub de la reunión\n\n");
+            crate::motor::spec_export::cuerpo(&hub, 3, &mut t);
+        }
+    }
+    if !acciones.is_empty() {
+        t.push_str("## Acciones\n\n");
+        for a in acciones {
+            let extra: Vec<String> = [("responsable", "responsable"), ("fecha límite", "fechaLimite"), ("estado", "estado")].iter().filter_map(|(r, k)| a[*k].as_str().filter(|s| !s.is_empty()).map(|s| format!("{r}: {s}"))).collect();
+            t.push_str(&format!("- {}{}\n", a["texto"].as_str().unwrap_or(""), if extra.is_empty() { String::new() } else { format!(" ({})", extra.join(", ")) }));
+        }
+    }
+    t
+}
+
+/// ¿Puede esta persona leer esa reunión? (Administración, quien la creó o quien está entre los asistentes.)
+fn puede_ver_reunion(sesion: &Session, m: &Value) -> bool {
+    if es_admin(sesion) {
+        return true;
+    }
+    m["userId"].as_str() == Some(sesion.id.as_str()) || (!sesion.email.is_empty() && m["attendees"].as_str().map(|a| a.to_lowercase().contains(&sesion.email.to_lowercase())).unwrap_or(false))
+}
+
+async fn reuniones_disponibles(State(st): State<AppState>, sesion: Session, Path(_id): Path<String>) -> ApiResult<Json<Value>> {
+    sesion.require_user()?;
+    let todas = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(to_jsonb(m) ORDER BY m.date DESC), '[]'::jsonb) FROM (SELECT id, title, date, type, "userId", attendees, (length(COALESCE(hub, '')) > 20 OR length(COALESCE(notes, '')) > 0 OR "actaFile" IS NOT NULL) AS con_contenido FROM "Meeting" ORDER BY date DESC LIMIT 60) m"#, &[]).await?;
+    let lista: Vec<Value> = todas
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| puede_ver_reunion(&sesion, m))
+        .take(30)
+        .map(|m| json!({ "id": m["id"], "titulo": m["title"], "fecha": m["date"], "tipo": m["type"], "conContenido": m["con_contenido"] }))
+        .collect();
+    Ok(Json(json!({ "reuniones": lista })))
+}
+
+async fn desde_reunion(State(st): State<AppState>, sesion: Session, Path(id): Path<String>, Json(b): Json<Value>) -> ApiResult<Json<Value>> {
+    sesion.require_user()?;
+    let mid = b["meetingId"].as_str().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| ApiError::bad_request("meetingId requerido"))?.to_string();
+    let r = fetch_json_opt(
+        &st.pool,
+        r#"SELECT jsonb_build_object('m', to_jsonb(mt), 'acciones', COALESCE((SELECT jsonb_agg(jsonb_build_object('texto', a.texto, 'responsable', a.responsable, 'fechaLimite', a."fechaLimite", 'estado', a.estado) ORDER BY a."createdAt") FROM "MeetingAction" a WHERE a."meetingId" = mt.id), '[]'::jsonb))
+             FROM "Meeting" mt WHERE mt.id = $1"#,
+        &[B::T(mid.clone())],
+    )
+    .await?
+    .ok_or_else(|| ApiError::not_found("Reunión no encontrada"))?;
+    let m = &r["m"];
+    if !puede_ver_reunion(&sesion, m) {
+        return Err(ApiError::forbidden("No participas en esa reunión"));
+    }
+    let acciones: Vec<Value> = r["acciones"].as_array().cloned().unwrap_or_default();
+    let texto = texto_de_reunion(m, &acciones);
+    if texto.trim().chars().count() < 60 || (m["hub"].is_null() && m["notes"].is_null() && acciones.is_empty()) {
+        return Err(ApiError::bad_request("La reunión no tiene notas, decisiones ni acciones registradas todavía."));
+    }
+    if texto.chars().count() > MAX_CONTENIDO {
+        return Err(ApiError::bad_request("La reunión es demasiado larga para importarla (más de 60.000 caracteres)."));
+    }
+    let origen = format!("reunion:{mid}");
+    let ya = fetch_json_opt(&st.pool, r#"SELECT jsonb_build_object('id', id, 'estado', estado) FROM "FuenteProyecto" WHERE "solucionId" = $1 AND origen = $2"#, &[B::T(id.clone()), B::T(origen.clone())]).await?;
+    if let Some(y) = ya {
+        if y["estado"] == "SIN_PROCESAR" {
+            exec(&st.pool, r#"UPDATE "FuenteProyecto" SET contenido = $2, "updatedAt" = NOW() WHERE id = $1"#, &[B::T(y["id"].as_str().unwrap_or("").into()), B::T(texto)]).await?;
+        }
+        return Ok(Json(json!({ "ok": true, "id": y["id"], "yaExistia": true })));
+    }
+    let fid = new_id();
+    exec(
+        &st.pool,
+        r#"INSERT INTO "FuenteProyecto" (id, "solucionId", tipo, titulo, contenido, fecha, "faseClave", visibilidad, origen, meta, "creadoPor")
+           VALUES ($1, $2, 'ACTA', $3, $4, NULLIF($5, '')::timestamp, $6, 'INTERNO', $7, $8, $9)"#,
+        &[
+            B::T(fid.clone()),
+            B::T(id),
+            B::T(format!("Reunión: {}", m["title"].as_str().unwrap_or("sin título")).chars().take(200).collect()),
+            B::T(texto),
+            B::T(m["date"].as_str().unwrap_or("").to_string()),
+            B::OT(limpio(&b, "faseClave", 60)),
+            B::T(origen),
+            B::J(json!({ "reunionId": mid })),
+            B::T(nombre_de(&sesion)),
+        ],
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true, "id": fid, "yaExistia": false })))
+}
+
+/// Borra el texto de una fuente (por ejemplo una transcripción que ya cumplió su plazo de retención) y conserva lo que se extrajo de ella.
+async fn purgar(State(st): State<AppState>, sesion: Session, Path((id, fid)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    if !es_admin(&sesion) {
+        return Err(ApiError::forbidden("No autorizado"));
+    }
+    let n = exec(&st.pool, r#"UPDATE "FuenteProyecto" SET contenido = '', enlace = NULL, meta = meta || '{"purgada": true}'::jsonb, "updatedAt" = NOW() WHERE id = $1 AND "solucionId" = $2"#, &[B::T(fid), B::T(id)]).await?;
+    if n == 0 {
+        return Err(ApiError::not_found("Fuente no encontrada"));
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconoce_marcas_de_tiempo() {
+        assert!(es_minuto("12:34") && es_minuto("1:05") && es_minuto("01:02:03"));
+        assert!(!es_minuto("12") && !es_minuto("12:3") && !es_minuto("abc:de") && !es_minuto("::") && !es_minuto("123:45"));
+    }
+
+    #[test]
+    fn el_minuto_se_lee_aunque_venga_entre_corchetes() {
+        let txt = "{\"resumen\":\"r\",\"items\":[{\"tipo\":\"ACCION\",\"texto\":\"Enviar la lista\",\"minuto\":\"[12:34]\"},{\"tipo\":\"RIESGO\",\"texto\":\"Retraso\",\"minuto\":\"pronto\"}]}";
+        let (_, items) = parsear_extraccion(txt).unwrap();
+        assert_eq!(items[0].minuto.as_deref(), Some("12:34"));
+        assert_eq!(items[1].minuto, None);
+    }
+
+    #[test]
+    fn arma_el_texto_de_una_reunion_con_hub_y_acciones() {
+        let hub = json!({ "objetivo": "Acordar el alcance", "puntos": [{ "id": "p1", "texto": "Recordatorios" }], "notas": json!({ "tabs": [{ "titulo": "General", "contenido": "Se habló de WhatsApp" }] }).to_string(), "archivos": ["x.pdf"] });
+        let m = json!({ "title": "Alcance", "date": "2026-11-18", "attendees": "laura@x.co", "hub": hub.to_string(), "notes": "Notas sueltas" });
+        let t = texto_de_reunion(&m, &[json!({ "texto": "Enviar vacunas", "responsable": "Laura", "estado": "PENDIENTE" })]);
+        assert!(t.starts_with("# Alcance") && t.contains("Asistentes: laura@x.co") && t.contains("Acordar el alcance"));
+        assert!(t.contains("Se habló de WhatsApp"), "abre las notas del hub");
+        assert!(t.contains("- Enviar vacunas (responsable: Laura, estado: PENDIENTE)"));
+        assert!(!t.contains("x.pdf"), "no incluye los archivos adjuntos");
+    }
 
     #[test]
     fn extrae_items_validos_y_descarta_lo_demas() {
