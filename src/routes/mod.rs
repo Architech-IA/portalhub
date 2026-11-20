@@ -4,6 +4,8 @@ use crate::state::AppState;
 
 pub mod administracion;
 pub mod artefactos;
+pub mod catalogo_artefactos;
+pub mod paquete_cierre;
 pub mod auth;
 pub mod agentes;
 pub mod aichat;
@@ -68,6 +70,7 @@ pub fn router() -> Router<AppState> {
         .merge(soluciones_ia::router())
         .merge(solucion_hub::router())
         .merge(artefactos::router())
+        .merge(catalogo_artefactos::router())
         .merge(ejecutor::router())
         .merge(fases::router())
         .merge(plantillas::router())

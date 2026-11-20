@@ -14,6 +14,8 @@ pub mod grafo;
 pub mod infra;
 pub mod lead;
 pub mod repo;
+pub mod seguridad;
+pub mod spec_export;
 
 use axum::{
     extract::{Path, Query, Request, State},
@@ -50,6 +52,7 @@ pub fn router(st: AppState) -> Router<AppState> {
         .route("/api/proyectos/{id}/deploy/revertir", post(proyecto_deploy_revertir))
         .route("/api/proyectos/{id}/deploy/pruebas", post(proyecto_deploy_pruebas))
         .route("/api/proyectos/{id}/db", post(proyecto_db))
+        .route("/api/proyectos/{id}/spec/exportar", post(spec_exportar))
         .route("/api/proyectos/{id}/db/migrar", post(proyecto_migrar))
         .route("/api/proyectos/{id}/env", get(env_listar).post(env_guardar).delete(env_borrar))
         .route("/api/proposals/{id}/documents", post(documento_crear))
@@ -617,5 +620,12 @@ async fn documento_crear(State(st): State<AppState>, Path(propuesta): Path<Strin
             Json(d).into_response()
         }
         Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    }
+}
+
+async fn spec_exportar(State(st): State<AppState>, Path(id): Path<String>) -> Response {
+    match spec_export::exportar(&st, &id).await {
+        Ok(r) => Json(r).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, corto500(e)),
     }
 }

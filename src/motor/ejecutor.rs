@@ -817,6 +817,18 @@ pub async fn finalizar(st: &AppState, c: Cierre) -> R<Value> {
             if chequeo.corrio {
                 checklist.insert(0, json!({ "criterion": "El código escrito compila (tsc --noEmit)", "passed": true, "reason": "Verificado con el compilador real" }));
             }
+            // Revisión de seguridad con reglas fijas sobre los archivos que escribió la tarea (sesión y rol, secretos, ejecución dinámica).
+            let hallazgos = super::seguridad::revisar_tarea(&raiz_chequeo, &archivos).await;
+            if !hallazgos.is_empty() {
+                let graves = hallazgos.iter().filter(|h| h.gravedad == "ALTA").count();
+                let advertir = super::seguridad::solo_advertir();
+                let texto = super::seguridad::resumir(&hallazgos);
+                emitir_traza(st, tarea, Some(exec_id), if graves == 0 || advertir { "info" } else { "fail" }, &format!("revisión de seguridad — {} hallazgo(s), {graves} grave(s):\n{texto}", hallazgos.len())).await;
+                checklist.push(json!({ "criterion": "Revisión de seguridad con reglas fijas (sesión y rol, secretos, ejecución dinámica)", "passed": graves == 0 || advertir, "reason": texto }));
+                if graves > 0 && !advertir {
+                    verificado = "FAILED".into();
+                }
+            }
             let pasados = checklist.iter().filter(|x| x["passed"] == true).count();
             emitir_traza(st, tarea, Some(exec_id), if v.paso { "check" } else { "fail" }, &format!("verificador semántico — {} ({pasados}/{} criterios)", if v.paso { "PASSED" } else { "FAILED" }, checklist.len())).await;
         }

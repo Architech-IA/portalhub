@@ -1604,6 +1604,7 @@ async fn avanzar(State(st): State<AppState>, se: Session, Path(id): Path<String>
             mover(&st, &id, def, idx + 1, "AVANCE", &a, nota_h(nota.as_deref()).as_deref()).await?;
         }
     }
+if body["resultado"] != "PERDIDO" {        let crit = criterios_fase(def, &est["criterios"], idx);        let nombre_fase = lista(def)[idx]["nombre"].as_str().unwrap_or(actual).to_string();        crate::routes::paquete_cierre::generar(&st, &id, actual, &nombre_fase, &crit, &a.nombre).await;    }
     let nuevo = fetch_text_opt(&st.pool, r#"SELECT "faseActual" FROM "ProyectoFase" WHERE "solucionId" = $1"#, &[B::T(id)]).await?;
     Ok(Json(json!({ "ok": true, "faseActual": nuevo })))
 }
