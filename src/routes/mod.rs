@@ -16,6 +16,8 @@ pub mod biblioteca;
 pub mod paquete_cierre;
 pub mod auth;
 pub mod agentes;
+pub mod agentes_ficha;
+pub mod gateway;
 pub mod aichat;
 pub mod backlog;
 pub mod catalogos;
@@ -74,6 +76,8 @@ pub fn router() -> Router<AppState> {
         .merge(proyectos::router())
         .merge(seguimiento::router())
         .merge(agentes::router())
+        .merge(agentes_ficha::router())
+        .merge(gateway::router())
         .merge(triggers::router())
         .merge(soluciones_ia::router())
         .merge(solucion_hub::router())

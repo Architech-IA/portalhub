@@ -28,7 +28,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/proyectos/{id}/pruebas-aceptacion/{pid}/decidir", post(decidir))
 }
 
-const MAX_REQUISITOS_POR_LLAMADA: usize = 6;
+const MAX_REQUISITOS_POR_LLAMADA: usize = 2;
 
 fn codigo(i: usize) -> String {
     format!("REQ-{:03}", i + 1)
@@ -109,17 +109,18 @@ async fn generar(State(st): State<AppState>, sesion: Session, Path(id): Path<Str
     if reqs.is_empty() {
         return Err(ApiError::bad_request("El PRD todavía no tiene requisitos"));
     }
-    let existentes = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(DISTINCT "reqCodigo"), '[]'::jsonb) FROM "PruebaAceptacion" WHERE "solucionId" = $1 AND estado = 'APROBADA'"#, &[B::T(id.clone())]).await?;
+    let existentes = fetch_json(&st.pool, r#"SELECT COALESCE(jsonb_agg(DISTINCT "reqCodigo"), '[]'::jsonb) FROM "PruebaAceptacion" WHERE "solucionId" = $1 AND estado IN ('APROBADA', 'PROPUESTA')"#, &[B::T(id.clone())]).await?;
     let con_aprobada: Vec<String> = existentes.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     let pedido = body["reqCodigo"].as_str().map(str::to_string);
-    let elegidos: Vec<_> = reqs
+    let candidatos: Vec<_> = reqs
         .iter()
         .filter(|r| match &pedido {
             Some(p) => &r.0 == p,
             None => !con_aprobada.contains(&r.0),
         })
-        .take(MAX_REQUISITOS_POR_LLAMADA)
         .collect();
+    let restantes_tras_lote = candidatos.len().saturating_sub(MAX_REQUISITOS_POR_LLAMADA);
+    let elegidos: Vec<_> = candidatos.into_iter().take(MAX_REQUISITOS_POR_LLAMADA).collect();
     if elegidos.is_empty() {
         return Ok(Json(json!({ "generadas": 0, "mensaje": "Todos los requisitos ya tienen pruebas aprobadas (o el código pedido no existe)." })));
     }
@@ -130,7 +131,7 @@ async fn generar(State(st): State<AppState>, sesion: Session, Path(id): Path<Str
         .collect::<Vec<_>>()
         .join("\n");
     let sistema = "Eres un ingeniero de QA. Para cada requisito, escribe pruebas de aceptación como escenarios dado/cuando/entonces, concretos y verificables, con datos de ejemplo reales (no genéricos). Incluye siempre al menos un escenario de error o de límite, y uno de permisos si el requisito toca datos de personas. Responde SOLO con un arreglo JSON, sin explicaciones ni bloques de código: [{\"reqCodigo\":\"REQ-001\",\"titulo\":\"...\",\"escenarios\":[{\"dado\":\"...\",\"cuando\":\"...\",\"entonces\":\"...\"}]}]. Entre 2 y 4 escenarios por requisito. Usa exactamente los códigos REQ recibidos.";
-    let respuesta = crate::llm::call_open_code(&st, sistema, &usuario, &format!("pruebas-{id}"), 3500, 50).await.map_err(|e| ApiError::bad_request(format!("El modelo no respondió: {e}")))?;
+    let respuesta = crate::llm::call_open_code(&st, sistema, &usuario, &format!("pruebas-{id}"), 7000, 56).await.map_err(|e| ApiError::bad_request(format!("El modelo no respondió: {e}")))?;
     let nuevas = parsear_respuesta(&respuesta, &permitidos);
     if nuevas.is_empty() {
         return Err(ApiError::bad_request("El modelo no devolvió pruebas utilizables. Vuelve a intentarlo."));
@@ -148,7 +149,7 @@ async fn generar(State(st): State<AppState>, sesion: Session, Path(id): Path<Str
         )
         .await?;
     }
-    Ok(Json(json!({ "generadas": nuevas.len(), "requisitos": permitidos })))
+    Ok(Json(json!({ "generadas": nuevas.len(), "requisitos": permitidos, "restantes": restantes_tras_lote })))
 }
 
 async fn decidir(State(st): State<AppState>, sesion: Session, Path((id, pid)): Path<(String, String)>, Json(body): Json<Value>) -> ApiResult<Json<Value>> {

@@ -76,13 +76,52 @@ async fn chat_agente(State(st): State<AppState>, o: Opcional, Path(slug): Path<S
         (st.cfg.opencode_url.clone(), true)
     };
     let id_modelo = if es_go && !modelo.starts_with("opencode-go/") { st.cfg.opencode_model.clone() } else { modelo.rsplit('/').next().unwrap_or(&modelo).to_string() };
-    let mut mensajes = vec![json!({ "role": "system", "content": prompt })];
-    let historia = body.get("history").and_then(|h| h.as_array()).cloned().unwrap_or_default();
-    let desde = historia.len().saturating_sub(10);
-    for m in &historia[desde..] {
-        mensajes.push(json!({ "role": if m["role"] == "user" { "user" } else { "assistant" }, "content": m["content"] }));
+    // Gateway: la persona del portal habla con el agente por el hilo común (memoria y contexto compartidos con los demás canales).
+    let ses = o.0.clone().ok_or_else(|| ApiError::unauthorized_msg("No autenticado"))?;
+    let canal_hilo = body.get("sessionId").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(String::from).unwrap_or_else(|| format!("portal-{}", ses.id));
+    let entrada = crate::routes::gateway::registrar_entrada(
+        &st,
+        crate::routes::gateway::Entrada {
+            canal: "PORTAL".into(),
+            externo_id: ses.id.clone(),
+            nombre: crate::routes::solucion_hub::nombre_de(&ses),
+            slug: slug.clone(),
+            texto: mensaje.trim().to_string(),
+            canal_hilo: Some(canal_hilo),
+            canal_msg: None,
+            solucion_id: body.get("solucionId").and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(String::from),
+            asunto: None,
+            adjuntos: json!([]),
+            ya_autorizado: false,
+        },
+    )
+    .await;
+    let gw = match entrada {
+        Ok(g) => Some(g),
+        Err(e) if e.0 == StatusCode::FORBIDDEN => return Err(e),
+        Err(e) => {
+            tracing::error!("[gateway] el chat sigue sin gateway: {}", e.1);
+            None
+        }
+    };
+    let mut mensajes = vec![];
+    if let Some(g) = &gw {
+        let extra = crate::routes::gateway::bloque_prompt(&g["contexto"]);
+        let sistema = if extra.is_empty() { prompt.clone() } else { format!("{prompt}\n\n{extra}") };
+        mensajes.push(json!({ "role": "system", "content": sistema }));
+        // La conversación sale del hilo (incluye este mensaje como el último).
+        for m in g["contexto"]["conversacion"].as_array().cloned().unwrap_or_default() {
+            mensajes.push(json!({ "role": if m["direccion"] == "ENTRADA" { "user" } else { "assistant" }, "content": m["texto"] }));
+        }
+    } else {
+        mensajes.push(json!({ "role": "system", "content": prompt }));
+        let historia = body.get("history").and_then(|h| h.as_array()).cloned().unwrap_or_default();
+        let desde = historia.len().saturating_sub(10);
+        for m in &historia[desde..] {
+            mensajes.push(json!({ "role": if m["role"] == "user" { "user" } else { "assistant" }, "content": m["content"] }));
+        }
+        mensajes.push(json!({ "role": "user", "content": mensaje }));
     }
-    mensajes.push(json!({ "role": "user", "content": mensaje }));
     let r = st
         .http
         .post(&url)
@@ -106,7 +145,22 @@ async fn chat_agente(State(st): State<AppState>, o: Opcional, Path(slug): Path<S
         Ok(res) => {
             let d: Value = res.json().await.unwrap_or_else(|_| json!({}));
             let reply = d.pointer("/choices/0/message/content").and_then(|c| c.as_str()).unwrap_or("Sin respuesta");
-            Ok(Json(json!({ "reply": reply })))
+            if let Some(g) = &gw {
+                let salida = crate::routes::gateway::Salida {
+                    hilo_id: g["hiloId"].as_str().unwrap_or("").to_string(),
+                    texto: reply.to_string(),
+                    accion: "responder".into(),
+                    decision: Some("Respuesta del chat del portal".into()),
+                    fuentes: json!([]),
+                    adjuntos: json!([]),
+                    responde_a: g["mensajeId"].as_str().map(String::from),
+                    entregado: true,
+                };
+                if let Err(e) = crate::routes::gateway::registrar_salida(&st, salida).await {
+                    tracing::error!("[gateway] no pude registrar la respuesta del chat: {}", e.1);
+                }
+            }
+            Ok(Json(json!({ "reply": reply, "hiloId": gw.as_ref().map(|g| g["hiloId"].clone()) })))
         }
     }
 }
